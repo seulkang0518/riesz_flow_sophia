@@ -7,3 +7,54 @@ __pycache__/
 .DS_Store
 .cache/
 results_cs_cluster/
+# Cluster job logs
+*.o[0-9]*
+*.e[0-9]*
+
+# Backups
+*.bak*
+*.bak_*
+*.bak_before_*
+*.bak_wrong_*
+train.py.bak*
+configs/**/*.bak*
+
+# Checkpoints / arrays / generated artifacts
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+*.pkl
+
+# Caches / outputs
+.cache/
+runs/
+log/
+wandb/
+
+# Cluster job logs
+*.o[0-9]*
+*.e[0-9]*
+
+# Backups
+*.bak*
+*.bak_*
+*.bak_before_*
+*.bak_wrong_*
+train.py.bak*
+configs/**/*.bak*
+
+# Checkpoints / arrays / generated artifacts
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+*.pkl
+
+# Caches / outputs
+.cache/
+runs/
+log/
+wandb/

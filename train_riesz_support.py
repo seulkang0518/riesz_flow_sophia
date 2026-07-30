@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from collections import defaultdict
+
 import torch
 from einops import rearrange, repeat
 from tqdm import tqdm
@@ -17,7 +19,7 @@ from tqdm import tqdm
 from dataset.dataset import get_postprocess_fn, infinite_sampler
 from drift_loss import drift_loss
 from drift_loss_ot import drift_loss_ot
-from riesz_loss import riesz_loss as direct_riesz_loss
+from riesz_loss_support import riesz_loss as direct_riesz_loss
 from riesz_loss_sliced import riesz_loss as sliced_riesz_loss
 from memory_bank import ArrayMemoryBank
 from models.mae_model import build_activation_function
@@ -41,6 +43,79 @@ class TrainState:
     optimizer: torch.optim.Optimizer
     ema_model: torch.nn.Module
     ema_decay: float
+
+
+class GeneratedFeatureBank:
+    """Per-process, class-conditional generated-feature replay bank.
+
+    Each branch stores tensors with shape [particles, feature_tokens, dim] on
+    CPU. Sampling returns [batch, particles, feature_tokens, dim]. The bank is
+    intentionally local to each DDP process; no cross-rank communication is
+    performed.
+    """
+
+    def __init__(self, max_particles_per_class: int = 64, storage_dtype: str = "float16"):
+        if max_particles_per_class < 1:
+            raise ValueError("max_particles_per_class must be positive")
+        if storage_dtype not in {"float16", "float32"}:
+            raise ValueError("storage_dtype must be 'float16' or 'float32'")
+        self.max_particles_per_class = int(max_particles_per_class)
+        self.storage_dtype = torch.float16 if storage_dtype == "float16" else torch.float32
+        self._storage = defaultdict(dict)
+
+    @torch.no_grad()
+    def add(self, branch: str, labels: torch.Tensor, features: torch.Tensor) -> None:
+        """Add [B, G, F, D] generated features for the supplied labels."""
+        if features.ndim != 4:
+            raise ValueError(f"features must have shape [B, G, F, D], got {tuple(features.shape)}")
+        if labels.shape[0] != features.shape[0]:
+            raise ValueError("labels and features must have the same batch dimension")
+
+        labels_cpu = labels.detach().to("cpu", dtype=torch.long)
+        features_cpu = features.detach().to("cpu", dtype=self.storage_dtype)
+        branch_store = self._storage[str(branch)]
+
+        for b, label in enumerate(labels_cpu.tolist()):
+            new = features_cpu[b]
+            old = branch_store.get(int(label))
+            merged = new if old is None else torch.cat([old, new], dim=0)
+            if merged.shape[0] > self.max_particles_per_class:
+                merged = merged[-self.max_particles_per_class :]
+            branch_store[int(label)] = merged.contiguous()
+
+    @torch.no_grad()
+    def sample_or_current(
+        self,
+        branch: str,
+        labels: torch.Tensor,
+        current: torch.Tensor,
+        n_samples: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Sample class-conditional history, falling back to current support.
+
+        ``current`` has shape [B, G, F, D]. Missing classes use a detached
+        sample from the current batch, which makes the first step well-defined.
+        """
+        if current.ndim != 4:
+            raise ValueError(f"current must have shape [B, G, F, D], got {tuple(current.shape)}")
+        n_samples = int(n_samples)
+        if n_samples < 1:
+            raise ValueError("n_samples must be positive")
+
+        labels_cpu = labels.detach().to("cpu", dtype=torch.long)
+        current_cpu = current.detach().to("cpu", dtype=self.storage_dtype)
+        branch_store = self._storage.get(str(branch), {})
+        outputs = []
+
+        for b, label in enumerate(labels_cpu.tolist()):
+            source = branch_store.get(int(label))
+            if source is None or source.shape[0] == 0:
+                source = current_cpu[b]
+            indices = torch.randint(0, source.shape[0], (n_samples,))
+            outputs.append(source.index_select(0, indices))
+
+        return torch.stack(outputs, dim=0).to(device=device, dtype=current.dtype)
 
 
 def _generator_model_config(model) -> dict:
@@ -99,6 +174,7 @@ def train_step(
     use_riesz: bool = False,
     riesz_kwargs: dict | None = None,
     diverse_noise: bool = False,
+    generated_feature_bank: GeneratedFeatureBank | None = None,
 ):
     labels = torch.as_tensor(labels, device=device, dtype=torch.long)
 
@@ -127,9 +203,30 @@ def train_step(
     n_gen = int(gen_per_label)
     n_uncond = negative_samples.shape[1]
 
-    riesz_loss_fn = direct_riesz_loss
-    if bool((riesz_kwargs or {}).get("use_sliced", False)):
-        riesz_loss_fn = sliced_riesz_loss
+    riesz_cfg = dict(riesz_kwargs or {})
+    use_sliced_riesz = bool(riesz_cfg.pop("use_sliced", False))
+    riesz_self_support_mode = str(
+        riesz_cfg.pop("self_support_mode", "same_batch")
+    ).strip().lower()
+    if riesz_self_support_mode not in {"same_batch", "fresh", "bank"}:
+        raise ValueError(
+            "riesz self_support_mode must be one of: same_batch, fresh, bank"
+        )
+    generated_bank_samples = int(riesz_cfg.pop("generated_bank_samples", n_gen))
+    # These keys are consumed in train_gen when the bank is constructed.
+    riesz_cfg.pop("generated_bank_size", None)
+    riesz_cfg.pop("generated_bank_dtype", None)
+
+    riesz_loss_fn = sliced_riesz_loss if use_sliced_riesz else direct_riesz_loss
+    if use_sliced_riesz and riesz_self_support_mode != "same_batch":
+        raise ValueError(
+            "fresh/bank self support is implemented only for direct Riesz, "
+            "not riesz_loss_sliced"
+        )
+    if riesz_self_support_mode == "bank" and generated_feature_bank is None:
+        raise ValueError(
+            "self_support_mode='bank' requires generated_feature_bank"
+        )
 
     uncond_w = (cfg - 1.0) * (n_gen - 1) / max(1, n_uncond)
 
@@ -190,9 +287,12 @@ def train_step(
         _ot_kw = ot_kwargs or {}
         _use_new_cfg = _ot_kw.get("use_new_cfg", False)
         _resample_neg = _ot_kw.get("resample_neg", False) and _use_ot
+        _riesz_fresh_support = (
+            _use_riesz and riesz_self_support_mode == "fresh"
+        )
 
         resamp_features = None
-        if _resample_neg:
+        if _resample_neg or _riesz_fresh_support:
             with torch.no_grad():
                 neg_samples = state.model(
                     c=input_labels,
@@ -216,6 +316,7 @@ def train_step(
 
             gen_features = feature_apply(feature_params, gen_samples, **activation_kwargs)
             gen_features = {k: rearrange(v, "(b g) f d -> b g f d", b=chunk_bsz, g=n_gen) for k, v in gen_features.items()}
+            bank_additions = []
 
             chunk_loss = torch.zeros((), device=device)
 
@@ -225,9 +326,31 @@ def train_step(
                 feature_gen = gen_features[k]
 
                 if _use_riesz:
+                    feature_gen_grouped = feature_gen
+                    self_support = None
+
+                    if riesz_self_support_mode == "fresh":
+                        self_support = resamp_features[k]
+                    elif riesz_self_support_mode == "bank":
+                        self_support = generated_feature_bank.sample_or_current(
+                            branch=k,
+                            labels=chunk_labels,
+                            current=feature_gen_grouped,
+                            n_samples=generated_bank_samples,
+                            device=device,
+                        )
+                        bank_additions.append(
+                            (k, chunk_labels.detach(), feature_gen_grouped.detach())
+                        )
+
                     feature_pos = rearrange(feature_pos, "b x f d -> (b f) x d")
-                    feature_gen = rearrange(feature_gen, "b x f d -> (b f) x d")
+                    feature_gen = rearrange(feature_gen_grouped, "b x f d -> (b f) x d")
                     feature_uncond = rearrange(feature_uncond, "b x f d -> (b f) x d")
+                    if self_support is not None:
+                        self_support = rearrange(
+                            self_support, "b x f d -> (b f) x d"
+                        )
+
                     Bf = feature_gen.shape[0]
                     feature_repeats = Bf // max(1, chunk_cfg.shape[0])
                     weight_pos = repeat(
@@ -242,15 +365,27 @@ def train_step(
                         f=feature_repeats,
                         k=n_uncond,
                     )
-                    loss_feat, info = riesz_loss_fn(
-                        gen=feature_gen,
-                        fixed_pos=feature_pos,
-                        fixed_neg=feature_uncond,
-                        weight_gen=torch.ones_like(feature_gen[:, :, 0]),
-                        weight_pos=weight_pos,
-                        weight_neg=weight_neg,
-                        **(riesz_kwargs or {}),
-                    )
+                    if use_sliced_riesz:
+                        loss_feat, info = riesz_loss_fn(
+                            gen=feature_gen,
+                            fixed_pos=feature_pos,
+                            fixed_neg=feature_uncond,
+                            weight_gen=torch.ones_like(feature_gen[:, :, 0]),
+                            weight_pos=weight_pos,
+                            weight_neg=weight_neg,
+                            **riesz_cfg,
+                        )
+                    else:
+                        loss_feat, info = riesz_loss_fn(
+                            gen=feature_gen,
+                            fixed_pos=feature_pos,
+                            fixed_neg=feature_uncond,
+                            weight_gen=torch.ones_like(feature_gen[:, :, 0]),
+                            weight_pos=weight_pos,
+                            weight_neg=weight_neg,
+                            self_support=self_support,
+                            **riesz_cfg,
+                        )
                 else:
                     feature_pos = rearrange(feature_pos, "b x f d -> (b f) x d")
                     feature_gen = rearrange(feature_gen, "b x f d -> (b f) x d")
@@ -325,6 +460,14 @@ def train_step(
             scaled_loss.backward()
 
             total_loss_accum = total_loss_accum + chunk_loss.detach()
+
+        if _use_riesz and riesz_self_support_mode == "bank":
+            for branch, labels_to_add, features_to_add in bank_additions:
+                generated_feature_bank.add(
+                    branch=branch,
+                    labels=labels_to_add,
+                    features=features_to_add,
+                )
 
     g_norm = torch.nn.utils.clip_grad_norm_(state.model.parameters(), max_grad_norm)
     state.optimizer.step()
@@ -479,6 +622,23 @@ def train_gen(
     pbar = tqdm(range(step, total_steps), initial=step, total=total_steps) if is_rank_zero() else range(step, total_steps)
     memory_bank_positive = ArrayMemoryBank(num_classes=1000, max_size=positive_bank_size)
     memory_bank_negative = ArrayMemoryBank(num_classes=1, max_size=negative_bank_size)
+
+    generated_feature_bank = None
+    riesz_train_cfg = dict(riesz_kwargs or {})
+    if use_riesz and str(riesz_train_cfg.get("self_support_mode", "same_batch")).lower() == "bank":
+        generated_feature_bank = GeneratedFeatureBank(
+            max_particles_per_class=int(
+                riesz_train_cfg.get("generated_bank_size", 64)
+            ),
+            storage_dtype=str(
+                riesz_train_cfg.get("generated_bank_dtype", "float16")
+            ),
+        )
+        log_for_0(
+            "Using class-conditional generated feature bank: size=%d dtype=%s",
+            generated_feature_bank.max_particles_per_class,
+            riesz_train_cfg.get("generated_bank_dtype", "float16"),
+        )
     # Each optimizer step may refill the memory bank from multiple loader
     # batches. Resume at the matching point in the epoch sequence.
     train_iter = infinite_sampler(train_loader, step * loader_batches_per_step)
@@ -533,6 +693,7 @@ def train_gen(
                     use_riesz=use_riesz,
                     riesz_kwargs=riesz_kwargs,
                     diverse_noise=diverse_noise,
+                    generated_feature_bank=generated_feature_bank,
                     **forward_dict,
                 ),
                 (state, labels_sel, positive_samples, negative_samples, feature_params),
@@ -557,6 +718,7 @@ def train_gen(
             use_riesz=use_riesz,
             riesz_kwargs=riesz_kwargs,
             diverse_noise=diverse_noise,
+            generated_feature_bank=generated_feature_bank,
             **forward_dict,
         )
 
@@ -582,7 +744,7 @@ def train_gen(
                     model_config=_generator_model_config(state.model),
                 )
 
-        if eval_fid and ((step % eval_per_step == 0) or (step == 1) or (step == total_steps)):
+        if (step % eval_per_step == 0) or (step == 1) or (step == total_steps):
             accelerator_empty_cache()
             is_sanity = step == 1
             n_samples = sanity_samples if is_sanity else eval_samples
