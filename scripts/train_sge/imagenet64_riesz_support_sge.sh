@@ -4,7 +4,7 @@
 #$ -cwd
 #$ -V
 #$ -l gpu=true,gpu_type=h100
-#$ -pe gpu 1
+#$ -pe gpu 2
 #$ -l tmem=10G
 #$ -l h_rt=24:00:00
 #$ -R y
@@ -13,8 +13,8 @@
 
 set -eo pipefail
 
-REPO_DIR=${RIESZ_FLOW_REPO_DIR:-/home/zongchen/riesz_flow_hudson}
-SHARED_WFLOW_CACHE=${SHARED_WFLOW_CACHE:-/home/zongchen/riesz_flow_hudson/.cache}
+REPO_DIR=${RIESZ_FLOW_REPO_DIR:-/home/zongchen/riesz_flow_sophia}
+SHARED_WFLOW_CACHE=${SHARED_WFLOW_CACHE:-/home/zongchen/riesz_flow_sophia/.cache}
 
 eval "$(/home/zongchen/miniconda3/condabin/conda shell.bash hook)"
 conda activate mmd_flow
@@ -44,7 +44,7 @@ if [[ ! -f "$MAE_METADATA" ]]; then
   exit 1
 fi
 
-export NGPU=${NGPU:-1}
+export NGPU=${NGPU:-${NSLOTS:-2}}
 export MASTER_PORT=${MASTER_PORT:-6668}
 
 export CONFIG=${CONFIG:-configs/gen/imagenet64_riesz_genbank.yaml}

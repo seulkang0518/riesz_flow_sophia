@@ -46,10 +46,10 @@ optimizer:
   adam_b2: 0.95
 
 train:
-  total_steps: 150000
   diverse_noise: true
   train_batch_size: 8
   seed: 42
+  num_epochs: 150
   save_per_step: 500
   keep_every: 2500
   eval_per_step: 500

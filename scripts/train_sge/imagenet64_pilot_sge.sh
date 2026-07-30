@@ -13,8 +13,8 @@
 
 set -euo pipefail
 
-REPO_DIR=${RIESZ_FLOW_REPO_DIR:-/home/zongchen/riesz_flow_hudson}
-SHARED_WFLOW_CACHE=${SHARED_WFLOW_CACHE:-/home/zongchen/riesz_flow_hudson/.cache}
+REPO_DIR=${RIESZ_FLOW_REPO_DIR:-/home/zongchen/riesz_flow_sophia}
+SHARED_WFLOW_CACHE=${SHARED_WFLOW_CACHE:-/home/zongchen/riesz_flow_sophia/.cache}
 
 eval "$(/home/zongchen/miniconda3/condabin/conda shell.bash hook)"
 conda activate mmd_flow
@@ -44,11 +44,11 @@ if [[ ! -f "$MAE_METADATA" ]]; then
   exit 1
 fi
 
-export NGPU=${NGPU:-2}
+export NGPU=${NGPU:-${NSLOTS:-2}}
 export MASTER_PORT=${MASTER_PORT:-6667}
 export CONFIG=${CONFIG:-configs/gen/imagenet64_pilot.yaml}
-export RUN_NAME=${RUN_NAME:-imagenet64_mmd_ot_debiased_r0p05_sink10_lr2e-4_trainbs8_pos16_neg8_gen16_acc2}
-export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow//$RUN_NAME}
+export RUN_NAME=${RUN_NAME:-imagenet64_pilot_sophia}
+export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
 export DRIFT_COMPILE=${DRIFT_COMPILE:-0}
 export DRIFT_FEAT_CHUNK=${DRIFT_FEAT_CHUNK:-1}
 export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
