@@ -11,7 +11,7 @@
 #$ -j y
 #$ -o /home/zongchen/
 
-set -euo pipefail
+set -eo pipefail
 
 REPO_DIR=${RIESZ_FLOW_REPO_DIR:-/home/zongchen/riesz_flow_sophia}
 SHARED_WFLOW_CACHE=${SHARED_WFLOW_CACHE:-/home/zongchen/riesz_flow_sophia/.cache}
