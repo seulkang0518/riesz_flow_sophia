@@ -90,9 +90,15 @@ train:
   grad_accum_steps: 4
   max_grad_norm: 2.0
 
+  ot_mode: "none"
   use_riesz: true
+
   riesz_kwargs:
     epsilon: 1.0e-6
+    self_support_mode: "bank"
+    generated_bank_size: 16
+    generated_bank_samples: 16
+    generated_bank_dtype: "float16"
 
 feature:
   mae_path: "hf://mae_latent_256"
