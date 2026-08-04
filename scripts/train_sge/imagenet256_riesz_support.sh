@@ -5,7 +5,7 @@
 #$ -V
 #$ -l gpu=true,gpu_type=h100
 #$ -pe gpu 4
-#$ -l tmem=10G
+#$ -l tmem=30G
 #$ -l h_rt=72:00:00
 #$ -R y
 #$ -j y
