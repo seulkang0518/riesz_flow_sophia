@@ -95,8 +95,8 @@ train:
     use_sliced: true
     num_projections: 128
     self_support_mode: "bank"
-    generated_bank_size: 16
-    generated_bank_samples: 16
+    generated_bank_size: 8
+    generated_bank_samples: 8
     generated_bank_dtype: "float16"
 
 feature:
