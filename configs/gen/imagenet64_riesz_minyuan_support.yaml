@@ -87,6 +87,9 @@ train:
   grad_accum_steps: 1
   max_grad_norm: 2.0
 
+  ot_mode: "none"
+  use_riesz: true
+
   riesz_kwargs:
     epsilon: 1.0e-6
     self_support_mode: "bank"
