@@ -94,6 +94,8 @@ train:
   use_riesz: true
   riesz_kwargs:
     epsilon: 1.0e-6
+    use_sliced: true
+    num_projections: 128
 
 feature:
   mae_path: "hf://mae_latent_256"
