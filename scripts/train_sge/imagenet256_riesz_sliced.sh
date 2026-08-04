@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#$ -N imagenet256_riesz
+#$ -N imagenet256_riesz_sliced
 #$ -P aihub_ucl
 #$ -cwd
 #$ -V
