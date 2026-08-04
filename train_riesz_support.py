@@ -373,6 +373,7 @@ def train_step(
                             weight_gen=torch.ones_like(feature_gen[:, :, 0]),
                             weight_pos=weight_pos,
                             weight_neg=weight_neg,
+                            use_sliced=True,
                             **riesz_cfg,
                         )
                     else:
