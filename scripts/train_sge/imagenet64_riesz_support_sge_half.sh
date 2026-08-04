@@ -45,7 +45,7 @@ if [[ ! -f "$MAE_METADATA" ]]; then
 fi
 
 export NGPU=${NGPU:-${NSLOTS:-2}}
-export MASTER_PORT=${MASTER_PORT:-6668}
+export MASTER_PORT=${MASTER_PORT:-6671}
 
 export CONFIG=${CONFIG:-configs/gen/imagenet64_riesz_genbank_half.yaml}
 export RUN_NAME=${RUN_NAME:-imagenet64_riesz_support_bank16_samples16_rep0p5}
