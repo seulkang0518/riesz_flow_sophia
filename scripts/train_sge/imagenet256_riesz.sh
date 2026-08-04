@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-#$ -N imagenet64_pilot
+#$ -N imagenet256_riesz
 #$ -P aihub_ucl
 #$ -cwd
 #$ -V
 #$ -l gpu=true,gpu_type=h100
-#$ -pe gpu 2
+#$ -pe gpu 4
 #$ -l tmem=10G
-#$ -l h_rt=24:00:00
+#$ -l h_rt=72:00:00
 #$ -R y
 #$ -j y
 #$ -o /home/zongchen/
@@ -44,12 +44,18 @@ if [[ ! -f "$MAE_METADATA" ]]; then
   exit 1
 fi
 
-export NGPU=${NGPU:-${NSLOTS:-2}}
-export MASTER_PORT=${MASTER_PORT:-6667}
-export CONFIG=${CONFIG:-configs/gen/imagenet64_pilot.yaml}
-export RUN_NAME=${RUN_NAME:-imagenet64_pilot_sophia}
+export NGPU=${NGPU:-${NSLOTS:-4}}
+
+if [[ "$NGPU" -lt 1 ]]; then
+  echo "Error: invalid GPU process count: $NGPU" >&2
+  exit 1
+fi
+
+export MASTER_PORT=${MASTER_PORT:-6672}
+export CONFIG=${CONFIG:-configs/gen/imagenet256_riesz.yaml}
+export RUN_NAME=${RUN_NAME:-imagenet256_riesz_1node_4gpu_official30k}
 export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
-export DRIFT_COMPILE=${DRIFT_COMPILE:-0}
+export DRIFT_COMPILE=${DRIFT_COMPILE:-1}
 export DRIFT_FEAT_CHUNK=${DRIFT_FEAT_CHUNK:-1}
 export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 
@@ -76,6 +82,9 @@ echo "Repository: $REPO_DIR"
 echo "VAE:        $WFLOW_VAE_HF_PATH"
 echo "MAE root:   $WFLOW_DRIFTING_HF_ROOT"
 
+echo "NSLOTS:               ${NSLOTS:-unset}"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
+echo "Torch processes:       $NGPU"
 torchrun \
   --nnodes=1 \
   --nproc_per_node="$NGPU" \

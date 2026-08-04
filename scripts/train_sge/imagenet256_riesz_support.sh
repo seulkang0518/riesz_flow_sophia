@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-#$ -N imagenet64_pilot
+#$ -N imagenet256_rsupport
 #$ -P aihub_ucl
 #$ -cwd
 #$ -V
 #$ -l gpu=true,gpu_type=h100
-#$ -pe gpu 2
+#$ -pe gpu 4
 #$ -l tmem=10G
-#$ -l h_rt=24:00:00
+#$ -l h_rt=72:00:00
 #$ -R y
 #$ -j y
 #$ -o /home/zongchen/
@@ -27,8 +27,8 @@ export TORCH_HUB_DIR=${TORCH_HUB_DIR:-$SHARED_WFLOW_CACHE/torch_hub}
 export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
 export TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
 
-if [[ ! -f train.py ]]; then
-  echo "Error: train.py was not found in repository directory: $REPO_DIR" >&2
+if [[ ! -f train_riesz_support.py ]]; then
+  echo "Error: train_riesz_support.py was not found in repository directory: $REPO_DIR" >&2
   echo "Set RIESZ_FLOW_REPO_DIR if the repository is installed elsewhere." >&2
   exit 1
 fi
@@ -44,12 +44,18 @@ if [[ ! -f "$MAE_METADATA" ]]; then
   exit 1
 fi
 
-export NGPU=${NGPU:-${NSLOTS:-2}}
+export NGPU=${NGPU:-${NSLOTS:-4}}
+
+if [[ "$NGPU" -lt 1 ]]; then
+  echo "Error: invalid GPU process count: $NGPU" >&2
+  exit 1
+fi
+
 export MASTER_PORT=${MASTER_PORT:-6667}
-export CONFIG=${CONFIG:-configs/gen/imagenet64_pilot.yaml}
-export RUN_NAME=${RUN_NAME:-imagenet64_pilot_sophia}
+export CONFIG=${CONFIG:-configs/gen/imagenet256_riesz_support.yaml}
+export RUN_NAME=${RUN_NAME:-imagenet256_riesz_support_1node_4gpu_official30k}
 export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
-export DRIFT_COMPILE=${DRIFT_COMPILE:-0}
+export DRIFT_COMPILE=${DRIFT_COMPILE:-1}
 export DRIFT_FEAT_CHUNK=${DRIFT_FEAT_CHUNK:-1}
 export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 
@@ -76,11 +82,14 @@ echo "Repository: $REPO_DIR"
 echo "VAE:        $WFLOW_VAE_HF_PATH"
 echo "MAE root:   $WFLOW_DRIFTING_HF_ROOT"
 
+echo "NSLOTS:               ${NSLOTS:-unset}"
+echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
+echo "Torch processes:       $NGPU"
 torchrun \
   --nnodes=1 \
   --nproc_per_node="$NGPU" \
   --master_addr=127.0.0.1 \
   --master_port="$MASTER_PORT" \
-  train.py \
+  train_riesz_support.py \
   --config "$CONFIG" \
   --workdir "$WORKDIR"
