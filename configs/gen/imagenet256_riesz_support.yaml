@@ -95,9 +95,9 @@ train:
 
   riesz_kwargs:
     epsilon: 1.0e-6
-    self_support_mode: "bank"
-    generated_bank_size: 4
-    generated_bank_samples: 4
+    self_support_mode: "fresh"
+    generated_bank_size: 8
+    generated_bank_samples: 0
     generated_bank_dtype: "float16"
 
 feature:
