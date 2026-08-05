@@ -51,7 +51,7 @@ if [[ "$NGPU" -lt 1 ]]; then
   exit 1
 fi
 
-export MASTER_PORT=${MASTER_PORT:-6667}
+export MASTER_PORT=${MASTER_PORT:-28767}
 export CONFIG=${CONFIG:-configs/gen/imagenet256_riesz_support.yaml}
 export RUN_NAME=${RUN_NAME:-imagenet256_riesz_support_1node_4gpu_official30k}
 export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
@@ -62,7 +62,7 @@ export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 # The CS GPU parallel environment does not reserve extra CPU slots. Control
 # CPU concurrency explicitly here instead. These values are per GPU process.
 export CPU_THREADS_PER_GPU=${CPU_THREADS_PER_GPU:-4}
-export WFLOW_NUM_WORKERS=${WFLOW_NUM_WORKERS:-8}
+export WFLOW_NUM_WORKERS=${WFLOW_NUM_WORKERS:-4}
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-$CPU_THREADS_PER_GPU}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-$CPU_THREADS_PER_GPU}
 export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-$CPU_THREADS_PER_GPU}
