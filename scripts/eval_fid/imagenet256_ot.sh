@@ -40,7 +40,7 @@ export NGPU=${NGPU:-${NSLOTS:-2}}
 export MASTER_PORT=${MASTER_PORT:-28790}
 
 # ImageNet256 OT run.
-export CONFIG=${CONFIG:-configs/gen/imagenet256_ot.yaml}
+export CONFIG=${CONFIG:-configs/gen/imagenet256_ot_1node.yaml}
 export RUN_DIR=${RUN_DIR:-/SAN/intelsys/imagenet_mmd_flow/imagenet256_ot_1node_4gpu_official30k}
 export CKPT_DIR=${CKPT_DIR:-$RUN_DIR/checkpoints}
 export WORK_ROOT=${WORK_ROOT:-$RUN_DIR/fid_inference_ours_cfg1p5_work}
