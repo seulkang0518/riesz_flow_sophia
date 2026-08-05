@@ -4,7 +4,7 @@
 #$ -cwd
 #$ -V
 #$ -l gpu=true,gpu_type=h100
-#$ -pe gpu 4
+#$ -pe gpu 2
 #$ -l tmem=20G
 #$ -l h_rt=24:00:00
 #$ -R y
