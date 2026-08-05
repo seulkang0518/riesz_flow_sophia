@@ -62,7 +62,7 @@ export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 # The CS GPU parallel environment does not reserve extra CPU slots. Control
 # CPU concurrency explicitly here instead. These values are per GPU process.
 export CPU_THREADS_PER_GPU=${CPU_THREADS_PER_GPU:-4}
-export WFLOW_NUM_WORKERS=${WFLOW_NUM_WORKERS:-4}
+export WFLOW_NUM_WORKERS=${WFLOW_NUM_WORKERS:-2}
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-$CPU_THREADS_PER_GPU}
 export MKL_NUM_THREADS=${MKL_NUM_THREADS:-$CPU_THREADS_PER_GPU}
 export OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-$CPU_THREADS_PER_GPU}

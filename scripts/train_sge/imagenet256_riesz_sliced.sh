@@ -26,6 +26,7 @@ export WFLOW_DRIFTING_HF_ROOT=${WFLOW_DRIFTING_HF_ROOT:-$SHARED_WFLOW_CACHE/drif
 export TORCH_HUB_DIR=${TORCH_HUB_DIR:-$SHARED_WFLOW_CACHE/torch_hub}
 export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
 export TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 if [[ ! -f train.py ]]; then
   echo "Error: train.py was not found in repository directory: $REPO_DIR" >&2
