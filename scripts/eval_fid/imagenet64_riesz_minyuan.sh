@@ -36,7 +36,7 @@ export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
 export NGPU=${NGPU:-${NSLOTS:-2}}
-export MASTER_PORT=${MASTER_PORT:-28791}
+export MASTER_PORT=${MASTER_PORT:-288801}
 
 # ImageNet64 Riesz Minyuan run.
 export CONFIG=${CONFIG:-configs/gen/imagenet64_riesz_minyuan.yaml}
@@ -102,7 +102,7 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
 
 found_ckpt=0
 
-for STEPNUM in 00010000 00020000 00030000 00040000 00050000; do
+for STEPNUM in 00060000 00090000 00120000 00150000; do
   CKPT="$CKPT_DIR/state_${STEPNUM}.pt"
 
   if [[ ! -f "$CKPT" ]]; then
