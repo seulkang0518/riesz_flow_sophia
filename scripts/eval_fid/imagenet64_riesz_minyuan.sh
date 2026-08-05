@@ -36,7 +36,7 @@ export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
 export NGPU=${NGPU:-${NSLOTS:-2}}
-export MASTER_PORT=${MASTER_PORT:-288801}
+export MASTER_PORT=${MASTER_PORT:-28801}
 
 # ImageNet64 Riesz Minyuan run.
 export CONFIG=${CONFIG:-configs/gen/imagenet64_riesz_minyuan.yaml}
