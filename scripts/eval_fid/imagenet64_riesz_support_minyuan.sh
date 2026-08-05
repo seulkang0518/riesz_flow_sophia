@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#$ -N imagenet64_riesz_minyuan_fid
+#$ -N imagenet64_rsupport_minyuan_fid
 #$ -P aihub_ucl
 #$ -cwd
 #$ -V
