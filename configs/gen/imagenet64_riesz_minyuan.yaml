@@ -40,9 +40,9 @@ model:
 optimizer:
   lr_schedule:
     learning_rate: 0.0002
-    warmup_steps: 500
-    lr_schedule: "const"
-    total_steps: 150000
+    warmup_steps: 1000
+    lr_schedule: "cosine"
+    total_steps: 300000
   weight_decay: 0.01
   adam_b1: 0.9
   adam_b2: 0.95

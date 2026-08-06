@@ -45,9 +45,9 @@ if [[ ! -f "$MAE_METADATA" ]]; then
 fi
 
 export NGPU=${NGPU:-${NSLOTS:-2}}
-export MASTER_PORT=${MASTER_PORT:-6668}
-export CONFIG=${CONFIG:-configs/gen/imagenet64_riesz_minyuan.yaml}
-export RUN_NAME=${RUN_NAME:-imagenet64_riesz_minyuan}
+export MASTER_PORT=${MASTER_PORT:-7684}
+export CONFIG=${CONFIG:-configs/gen/imagenet64_riesz_minyuan_cos.yaml}
+export RUN_NAME=${RUN_NAME:-imagenet64_riesz_minyuan_cos}
 export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
 export DRIFT_COMPILE=${DRIFT_COMPILE:-0}
 export DRIFT_FEAT_CHUNK=${DRIFT_FEAT_CHUNK:-1}
