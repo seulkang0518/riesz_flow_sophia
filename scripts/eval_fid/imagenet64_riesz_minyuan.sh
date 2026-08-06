@@ -36,11 +36,11 @@ export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
 export NGPU=${NGPU:-${NSLOTS:-2}}
-export MASTER_PORT=${MASTER_PORT:-28801}
+export MASTER_PORT=${MASTER_PORT:-28806}
 
 # ImageNet64 Riesz Minyuan run.
 export CONFIG=${CONFIG:-configs/gen/imagenet64_riesz_minyuan.yaml}
-export RUN_DIR=${RUN_DIR:-/SAN/intelsys/imagenet_mmd_flow/imagenet64_riesz_minyuan}
+export RUN_DIR=${RUN_DIR:-/SAN/intelsys/imagenet_mmd_flow/imagenet64_riesz_minyuan_cos}
 export CKPT_DIR=${CKPT_DIR:-$RUN_DIR/checkpoints}
 export WORK_ROOT=${WORK_ROOT:-$RUN_DIR/fid_inference_ours_cfg2p5_work}
 export OUT_ROOT=${OUT_ROOT:-$RUN_DIR/fid_inference_ours_cfg2p5_json}
@@ -102,7 +102,7 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
 
 found_ckpt=0
 
-for STEPNUM in 00060000 00090000 00120000 00150000; do
+for STEPNUM in 00010000 00030000 00060000 00090000; do
   CKPT="$CKPT_DIR/state_${STEPNUM}.pt"
 
   if [[ ! -f "$CKPT" ]]; then
