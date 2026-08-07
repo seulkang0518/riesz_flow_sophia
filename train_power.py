@@ -17,7 +17,8 @@ from tqdm import tqdm
 from dataset.dataset import get_postprocess_fn, infinite_sampler
 from drift_loss import drift_loss
 from drift_loss_ot import drift_loss_ot
-from riesz_loss_power_schedule import riesz_loss
+from riesz_loss_power import riesz_loss as direct_riesz_loss
+from riesz_loss_sliced import riesz_loss as sliced_riesz_loss
 from memory_bank import ArrayMemoryBank
 from models.mae_model import build_activation_function
 from utils.ckpt_util import restore_checkpoint, save_checkpoint, save_params_ema_artifact
@@ -54,28 +55,6 @@ def _generator_model_config(model) -> dict:
 def _set_lr(optimizer: torch.optim.Optimizer, lr: float):
     for pg in optimizer.param_groups:
         pg["lr"] = float(lr)
-
-
-def _get_riesz_kwargs_for_step(
-    base_kwargs: dict | None,
-    step: int,
-    total_steps: int,
-    power_start: float,
-    power_end: float,
-) -> dict:
-    """Return Riesz kwargs with a linear power schedule for this step."""
-    kwargs = dict(base_kwargs) if base_kwargs else {}
-
-    if total_steps <= 1:
-        progress = 1.0
-    else:
-        progress = min(max(float(step) / float(total_steps - 1), 0.0), 1.0)
-
-    kwargs["riesz_power"] = (
-        float(power_start)
-        + progress * (float(power_end) - float(power_start))
-    )
-    return kwargs
 
 
 @torch.no_grad()
@@ -147,6 +126,10 @@ def train_step(
     n_pos = samples.shape[1]
     n_gen = int(gen_per_label)
     n_uncond = negative_samples.shape[1]
+
+    riesz_loss_fn = direct_riesz_loss
+    if bool((riesz_kwargs or {}).get("use_sliced", False)):
+        riesz_loss_fn = sliced_riesz_loss
 
     uncond_w = (cfg - 1.0) * (n_gen - 1) / max(1, n_uncond)
 
@@ -259,7 +242,7 @@ def train_step(
                         f=feature_repeats,
                         k=n_uncond,
                     )
-                    loss_feat, info = riesz_loss(
+                    loss_feat, info = riesz_loss_fn(
                         gen=feature_gen,
                         fixed_pos=feature_pos,
                         fixed_neg=feature_uncond,
@@ -391,7 +374,9 @@ def train_gen(
     postprocess_fn,
     dataset_name="imagenet256",
     train_batch_size=0,
+    num_epochs=None,
     total_steps=100000,
+    loader_batches_per_step=1,
     save_per_step=10000,
     eval_per_step=5000,
     eval_samples=50000,
@@ -435,8 +420,6 @@ def train_gen(
     ot_kwargs=None,
     use_riesz=False,
     riesz_kwargs=None,
-    riesz_power_start=1.5,
-    riesz_power_end=0.5,
     diverse_noise=False,
 ):
     if isinstance(ema_decay, (list, tuple)):
@@ -496,19 +479,13 @@ def train_gen(
     pbar = tqdm(range(step, total_steps), initial=step, total=total_steps) if is_rank_zero() else range(step, total_steps)
     memory_bank_positive = ArrayMemoryBank(num_classes=1000, max_size=positive_bank_size)
     memory_bank_negative = ArrayMemoryBank(num_classes=1, max_size=negative_bank_size)
-    train_iter = infinite_sampler(train_loader, step)
+    # Each optimizer step may refill the memory bank from multiple loader
+    # batches. Resume at the matching point in the epoch sequence.
+    train_iter = infinite_sampler(train_loader, step * loader_batches_per_step)
     _ot_kw = dict(ot_kwargs) if ot_kwargs else {}
 
     for step in pbar:
         start_time = time.time()
-
-        step_riesz_kwargs = _get_riesz_kwargs_for_step(
-            base_kwargs=riesz_kwargs,
-            step=step,
-            total_steps=total_steps,
-            power_start=riesz_power_start,
-            power_end=riesz_power_end,
-        )
         n_push = 0
         logger.set_step(step)
 
@@ -554,7 +531,7 @@ def train_gen(
                     ot_mode=ot_mode,
                     ot_kwargs=_ot_kw,
                     use_riesz=use_riesz,
-                    riesz_kwargs=step_riesz_kwargs,
+                    riesz_kwargs=riesz_kwargs,
                     diverse_noise=diverse_noise,
                     **forward_dict,
                 ),
@@ -578,7 +555,7 @@ def train_gen(
             ot_mode=ot_mode,
             ot_kwargs=_ot_kw,
             use_riesz=use_riesz,
-            riesz_kwargs=step_riesz_kwargs,
+            riesz_kwargs=riesz_kwargs,
             diverse_noise=diverse_noise,
             **forward_dict,
         )
@@ -588,11 +565,8 @@ def train_gen(
         metrics["process_time"] = process_time
         metrics["kimg"] = (step + 1) * positive_samples.shape[0] / 1000.0
         metrics["forward_kimg"] = (step + 1) * positive_samples.shape[0] / 1000.0 * forward_dict["gen_per_label"]
-        if use_riesz:
-            metrics["riesz_power"] = torch.tensor(
-                float(step_riesz_kwargs["riesz_power"]),
-                device=device,
-            )
+        completed_epochs = (step + 1) * loader_batches_per_step / max(1, len(train_loader))
+        metrics["epoch"] = min(float(num_epochs), completed_epochs) if num_epochs is not None else completed_epochs
         metrics.update(profile_metrics)
 
         logger.log_dict(metrics)
@@ -608,7 +582,7 @@ def train_gen(
                     model_config=_generator_model_config(state.model),
                 )
 
-        if eval_per_step > 0 and step % eval_per_step == 0:
+        if eval_fid and ((step % eval_per_step == 0) or (step == 1) or (step == total_steps)):
             accelerator_empty_cache()
             is_sanity = step == 1
             n_samples = sanity_samples if is_sanity else eval_samples
