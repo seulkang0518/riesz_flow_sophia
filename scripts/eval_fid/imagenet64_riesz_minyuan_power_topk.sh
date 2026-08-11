@@ -102,7 +102,7 @@ echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
 
 found_ckpt=0
 
-for STEPNUM in 00030000 00060000 00090000 00120000 00150000; do
+for STEPNUM in 00120000 00150000; do
   CKPT="$CKPT_DIR/state_${STEPNUM}.pt"
 
   if [[ ! -f "$CKPT" ]]; then
