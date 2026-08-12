@@ -1,8 +1,8 @@
-"""Direct weighted Riesz-kernel loss."""
+"""Direct weighted Riesz-kernel loss with optional top-k scheduling."""
 
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 
@@ -53,7 +53,11 @@ def _topk_weighted_pair_mean(
 
     finite_mask = torch.isfinite(vals)
     vals = torch.where(finite_mask, vals, torch.zeros_like(vals))
-    selected_pair_weight = torch.where(finite_mask, selected_pair_weight, torch.zeros_like(selected_pair_weight))
+    selected_pair_weight = torch.where(
+        finite_mask,
+        selected_pair_weight,
+        torch.zeros_like(selected_pair_weight),
+    )
 
     return (vals * selected_pair_weight).mean(dim=(-1, -2))
 
@@ -67,6 +71,68 @@ def _maybe_topk_pair_mean(
     if topk is None:
         return _weighted_pair_mean(distance, left_weight, right_weight)
     return _topk_weighted_pair_mean(distance, left_weight, right_weight, int(topk))
+
+
+def _resolve_topk(
+    topk: int | None,
+    topk_schedule: Any | None,
+    current_step: int | None,
+) -> int | None:
+    """Resolve active top-k from either a fixed value or a step schedule.
+
+    Accepted schedule formats:
+
+      topk_schedule:
+        - [0, 60000, 20]
+        - [60000, null, 32]
+
+    or:
+
+      topk_schedule:
+        - start: 0
+          end: 60000
+          topk: 20
+        - start: 60000
+          end: null
+          topk: 32
+
+    The interval convention is start <= current_step < end. If end is None,
+    the interval is open-ended.
+    """
+    if topk_schedule is None:
+        return topk
+
+    if current_step is None:
+        raise ValueError("current_step must be provided when topk_schedule is used")
+
+    step = int(current_step)
+
+    for entry in topk_schedule:
+        if isinstance(entry, dict):
+            start = int(entry["start"])
+            end = entry.get("end", None)
+            k = int(entry["topk"])
+        else:
+            if len(entry) != 3:
+                raise ValueError(
+                    "Each topk_schedule entry must be [start, end, topk] "
+                    f"or a dict with start/end/topk. Got: {entry!r}"
+                )
+            start, end, k = entry
+            start = int(start)
+            k = int(k)
+
+        if k <= 0:
+            raise ValueError(f"topk_schedule contains non-positive topk={k}")
+
+        if end is None:
+            if step >= start:
+                return k
+        else:
+            if start <= step < int(end):
+                return k
+
+    raise ValueError(f"No topk_schedule entry matched current_step={step}")
 
 
 def _riesz_distance(
@@ -92,6 +158,8 @@ def riesz_loss(
     epsilon: float = 1e-8,
     power: float = 1.0,
     topk: int | None = None,
+    topk_schedule: Any | None = None,
+    current_step: int | None = None,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     """Compute the direct powered Riesz energy-distance loss.
 
@@ -101,7 +169,7 @@ def riesz_loss(
 
     where
 
-        d_p(x, y) = (||x-y||^2 + epsilon)^(power/2).
+        d_p(x, y) = (||x-y||^2 + epsilon)^(power/2) - epsilon^(power/2).
 
     Optional fixed negatives contribute
 
@@ -111,11 +179,20 @@ def riesz_loss(
 
     Inputs have shape [B, particles, features] and the returned loss has
     shape [B].
+
+    topk may be fixed, or may be controlled by topk_schedule using current_step.
     """
     if epsilon <= 0:
         raise ValueError("epsilon must be positive")
     if power <= 0:
         raise ValueError("power must be positive")
+
+    topk = _resolve_topk(
+        topk=topk,
+        topk_schedule=topk_schedule,
+        current_step=current_step,
+    )
+
     if topk is not None and int(topk) <= 0:
         raise ValueError("topk must be positive when provided")
 
@@ -236,6 +313,10 @@ def riesz_loss(
         "scale": scale.detach(),
         "riesz_power": torch.as_tensor(power, device=gen.device),
         "riesz_topk": torch.as_tensor(-1 if topk is None else int(topk), device=gen.device),
+        "riesz_current_step": torch.as_tensor(
+            -1 if current_step is None else int(current_step),
+            device=gen.device,
+        ),
         "riesz_attraction": attraction.detach().mean(),
         "riesz_self_repulsion": self_repulsion.detach().mean(),
         "riesz_target_repulsion": target_repulsion.detach().mean(),

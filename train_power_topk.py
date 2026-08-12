@@ -249,6 +249,7 @@ def train_step(
                         weight_gen=torch.ones_like(feature_gen[:, :, 0]),
                         weight_pos=weight_pos,
                         weight_neg=weight_neg,
+                        current_step=int(state.step),
                         **(riesz_kwargs or {}),
                     )
                 else:
