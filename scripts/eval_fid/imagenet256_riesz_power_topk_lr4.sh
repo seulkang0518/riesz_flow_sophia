@@ -4,7 +4,7 @@
 #$ -cwd
 #$ -V
 #$ -l gpu=true,gpu_type=h100
-#$ -pe gpu 2
+#$ -pe gpu 1
 #$ -l tmem=20G
 #$ -l h_rt=24:00:00
 #$ -R y
@@ -35,7 +35,7 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
-export NGPU=${NGPU:-${NSLOTS:-4}}
+export NGPU=${NGPU:-${NSLOTS:-1}}
 export MASTER_PORT=${MASTER_PORT:-28780}
 
 # ---- EDIT THESE FOR THE RUN YOU WANT ----
