@@ -46,8 +46,8 @@ fi
 
 export NGPU=${NGPU:-${NSLOTS:-2}}
 export MASTER_PORT=${MASTER_PORT:-7682}
-export CONFIG=${CONFIG:-configs/gen/imagenet64_riesz_minyuan_power1_top20.yaml}
-export RUN_NAME=${RUN_NAME:-imagenet64_riesz_minyuan_power1_top20}
+export CONFIG=${CONFIG:-configs/gen/imagenet64_riesz_minyuan_power1_top16.yaml}
+export RUN_NAME=${RUN_NAME:-imagenet64_riesz_minyuan_power1_top16}
 export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
 export DRIFT_COMPILE=${DRIFT_COMPILE:-0}
 export DRIFT_FEAT_CHUNK=${DRIFT_FEAT_CHUNK:-1}
