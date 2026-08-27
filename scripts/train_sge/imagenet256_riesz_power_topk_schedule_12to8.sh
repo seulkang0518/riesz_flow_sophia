@@ -6,7 +6,7 @@
 #$ -l gpu=true,gpu_type=h100
 #$ -pe gpu 4
 #$ -l tmem=10G
-#$ -l h_rt=72:00:00
+#$ -l h_rt=36:00:00
 #$ -R y
 #$ -j y
 #$ -o /home/zongchen/
