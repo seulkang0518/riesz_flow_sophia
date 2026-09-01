@@ -13,8 +13,8 @@
 
 set -eo pipefail
 
-REPO_DIR=${RIESZ_FLOW_REPO_DIR:-/home/zongchen/riesz_flow_hudson}
-SHARED_WFLOW_CACHE=${SHARED_WFLOW_CACHE:-/home/zongchen/riesz_flow_hudson/.cache}
+REPO_DIR=${RIESZ_FLOW_REPO_DIR:-/home/zongchen/riesz_flow_sophia}
+SHARED_WFLOW_CACHE=${SHARED_WFLOW_CACHE:-/home/zongchen/riesz_flow_sophia/.cache}
 
 eval "$(/home/zongchen/miniconda3/condabin/conda shell.bash hook)"
 conda activate mmd_flow
