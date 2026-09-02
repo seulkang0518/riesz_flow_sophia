@@ -197,17 +197,23 @@ def _drift_effective_neighbor_diagnostics(
     R_list=(0.02, 0.05, 0.2),
     prefix: str = "drift_eff_pos",
 ):
-    """Measure positive-neighbor locality of the exact drift-loss force.
+    """Diagnose where locality is lost in the drifting affinity.
 
-    This reproduces the preprocessing and affinity construction in
-    ``drift_loss._compute_drift_field_impl``.  For each generated particle and
-    each R, it row-normalizes the positive force coefficients and reports
-    inverse-participation effective support, entropy effective support, top-k
-    mass, and the fraction of rows with effective support <= {2,4,8,16}.
+    This reproduces the exact preprocessing used by
+    ``drift_loss._compute_drift_field_impl`` and measures positive-neighbor
+    concentration at three stages:
 
-    Diagnostic only: all inputs are detached and no gradients flow through it.
+      1. row softmax: softmax(-d / R)
+      2. symmetric affinity before the 1e-6 floor:
+             sqrt(row_softmax * column_softmax)
+      3. actual post-floor affinity used by drift_loss:
+             sqrt(clamp(row_softmax * column_softmax, min=1e-6))
+
+    It also reports how much of the positive block is affected by the floor.
+    All calculations are detached and diagnostic-only.
     """
     tiny = 1e-12
+    floor = 1e-6
     info = {}
 
     gen = gen.detach().float()
@@ -251,46 +257,126 @@ def _drift_effective_neighbor_diagnostics(
 
     split_idx = C_g + fixed_neg.shape[1]
 
-    for R in tuple(float(r) for r in R_list):
-        logits = -dist_normed / float(R)
-        affinity = torch.softmax(logits, dim=-1)
-        aff_transpose = torch.softmax(logits, dim=-2)
-        affinity = torch.sqrt(torch.clamp(affinity * aff_transpose, min=1e-6))
-        affinity = affinity * targets_w[:, None, :]
+    def _record_distribution_stats(tag: str, values: torch.Tensor):
+        """Row-normalize positive weights and record effective-support stats."""
+        row_mass = values.sum(dim=-1, keepdim=True)
+        valid = row_mass.squeeze(-1) > tiny
 
-        # Exact positive force coefficient from drift_loss:
-        #   r_coeff_pos = aff_pos * sum_neg
-        # Row-normalizing this across positives measures which positive samples
-        # contribute to the positive part of the force.  sum_neg is a scalar per
-        # generated particle, but using r_coeff_pos directly keeps the diagnostic
-        # definition aligned with the actual force code.
-        aff_neg = affinity[:, :, :split_idx]
-        aff_pos = affinity[:, :, split_idx:]
-        sum_neg = torch.sum(aff_neg, dim=-1, keepdim=True)
-        pos_coeff = aff_pos * sum_neg
+        # Under normal operation these rows are nonzero. Keep a validity metric
+        # so pre-floor underflow is visible rather than silently hidden.
+        info[f"{tag}/frac_zero_mass_rows"] = (~valid).float().mean()
 
-        p = pos_coeff / pos_coeff.sum(dim=-1, keepdim=True).clamp_min(tiny)
-
+        p = values / row_mass.clamp_min(tiny)
         eff = 1.0 / p.pow(2).sum(dim=-1).clamp_min(tiny)
         entropy = -(p.clamp_min(tiny) * p.clamp_min(tiny).log()).sum(dim=-1)
         eff_entropy = entropy.exp()
 
-        tag = f"{prefix}_R{R:g}"
-        info[f"{tag}/eff_mean"] = eff.mean()
-        info[f"{tag}/eff_median"] = eff.median()
-        info[f"{tag}/eff_min"] = eff.min()
-        info[f"{tag}/eff_max"] = eff.max()
-        info[f"{tag}/eff_entropy_mean"] = eff_entropy.mean()
-        info[f"{tag}/eff_entropy_median"] = eff_entropy.median()
+        if bool(valid.any()):
+            eff_v = eff[valid]
+            ent_v = eff_entropy[valid]
+            info[f"{tag}/eff_mean"] = eff_v.mean()
+            info[f"{tag}/eff_median"] = eff_v.median()
+            info[f"{tag}/eff_min"] = eff_v.min()
+            info[f"{tag}/eff_max"] = eff_v.max()
+            info[f"{tag}/eff_entropy_mean"] = ent_v.mean()
+            info[f"{tag}/eff_entropy_median"] = ent_v.median()
 
-        for topk in [1, 2, 4, 8, 16, 32]:
-            kk = min(topk, p.shape[-1])
-            topk_mass = torch.topk(p, k=kk, dim=-1, largest=True).values.sum(dim=-1)
-            info[f"{tag}/top{topk}_mass_mean"] = topk_mass.mean()
-            info[f"{tag}/top{topk}_mass_median"] = topk_mass.median()
+            p_v = p[valid]
+            for topk in [1, 2, 4, 8, 16, 32]:
+                kk = min(topk, p_v.shape[-1])
+                topk_mass = torch.topk(
+                    p_v, k=kk, dim=-1, largest=True
+                ).values.sum(dim=-1)
+                info[f"{tag}/top{topk}_mass_mean"] = topk_mass.mean()
+                info[f"{tag}/top{topk}_mass_median"] = topk_mass.median()
 
-        for cutoff in [2, 4, 8, 16]:
-            info[f"{tag}/frac_eff_le_{cutoff}"] = (eff <= cutoff).float().mean()
+            for cutoff in [2, 4, 8, 16]:
+                info[f"{tag}/frac_eff_le_{cutoff}"] = (
+                    eff_v <= cutoff
+                ).float().mean()
+        else:
+            # This should be extremely unusual, but keep the log schema stable.
+            nan = torch.tensor(float("nan"), device=gen.device)
+            for key in [
+                "eff_mean", "eff_median", "eff_min", "eff_max",
+                "eff_entropy_mean", "eff_entropy_median",
+            ]:
+                info[f"{tag}/{key}"] = nan
+            for topk in [1, 2, 4, 8, 16, 32]:
+                info[f"{tag}/top{topk}_mass_mean"] = nan
+                info[f"{tag}/top{topk}_mass_median"] = nan
+            for cutoff in [2, 4, 8, 16]:
+                info[f"{tag}/frac_eff_le_{cutoff}"] = nan
+
+    for R in tuple(float(r) for r in R_list):
+        logits = -dist_normed / float(R)
+
+        # Stage 1: the exponential/row-softmax kernel itself.
+        row_aff = torch.softmax(logits, dim=-1)
+        col_aff = torch.softmax(logits, dim=-2)
+
+        row_pos = row_aff[:, :, split_idx:]
+        row_pos_weighted = row_pos * weight_pos[:, None, :]
+        _record_distribution_stats(
+            f"drift_eff_row_R{R:g}", row_pos_weighted
+        )
+
+        # Stage 2: symmetrized affinity BEFORE the clamp.  Use sqrt(raw_sym),
+        # because the actual code applies sqrt after clamping; this isolates the
+        # effect of the clamp itself rather than also changing the exponent.
+        raw_sym = row_aff * col_aff
+        raw_sym_pos = raw_sym[:, :, split_idx:]
+        sym_pre_pos = torch.sqrt(torch.clamp(raw_sym_pos, min=0.0))
+        sym_pre_pos = sym_pre_pos * weight_pos[:, None, :]
+        _record_distribution_stats(
+            f"drift_eff_sym_preclamp_R{R:g}", sym_pre_pos
+        )
+
+        # Stage 3: exact positive affinity used by drift_loss after the floor.
+        sym_post_pos = torch.sqrt(torch.clamp(raw_sym_pos, min=floor))
+        sym_post_pos = sym_post_pos * weight_pos[:, None, :]
+        _record_distribution_stats(
+            f"drift_eff_postclamp_R{R:g}", sym_post_pos
+        )
+
+        # Keep the old metric name too, so existing plotting/grep commands keep
+        # working. This is the same post-clamp positive-neighbor distribution.
+        _record_distribution_stats(
+            f"{prefix}_R{R:g}", sym_post_pos
+        )
+
+        # Directly diagnose the 1e-6 floor.
+        clipped = raw_sym_pos < floor
+        info[f"drift_eff_clip_R{R:g}/frac_pos_entries_clipped"] = (
+            clipped.float().mean()
+        )
+        info[f"drift_eff_clip_R{R:g}/frac_pos_rows_all_clipped"] = (
+            clipped.all(dim=-1).float().mean()
+        )
+        info[f"drift_eff_clip_R{R:g}/frac_pos_rows_any_clipped"] = (
+            clipped.any(dim=-1).float().mean()
+        )
+        info[f"drift_eff_clip_R{R:g}/frac_pos_entries_zero"] = (
+            (raw_sym_pos == 0).float().mean()
+        )
+
+        # How much of the *post-clamp* positive affinity mass is coming from
+        # entries that were lifted by the numerical floor?
+        post_mass = sym_post_pos.sum(dim=-1).clamp_min(tiny)
+        clipped_post_mass = (sym_post_pos * clipped).sum(dim=-1)
+        floor_mass_frac = clipped_post_mass / post_mass
+        info[f"drift_eff_clip_R{R:g}/floor_mass_frac_mean"] = (
+            floor_mass_frac.mean()
+        )
+        info[f"drift_eff_clip_R{R:g}/floor_mass_frac_median"] = (
+            floor_mass_frac.median()
+        )
+
+        # Raw symmetric-product scale is useful for seeing how far below the
+        # floor the positive entries actually are.
+        info[f"drift_eff_clip_R{R:g}/raw_sym_pos_mean"] = raw_sym_pos.mean()
+        info[f"drift_eff_clip_R{R:g}/raw_sym_pos_median"] = raw_sym_pos.median()
+        info[f"drift_eff_clip_R{R:g}/raw_sym_pos_max"] = raw_sym_pos.max()
 
     return info
 
