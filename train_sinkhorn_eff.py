@@ -441,11 +441,7 @@ def train_step(
                         _diag_weight_neg = torch.cat(
                             [
                                 torch.ones_like(feature_neg_detached[:, :, 0]),
-                                repeat(
-                                    _diag_cfg_w,
-                                    "b -> b k",
-                                    k=feature_uncond.shape[1],
-                                ),
+                                repeat(_diag_cfg_w, "b -> b 1"),
                             ],
                             dim=1,
                         )
