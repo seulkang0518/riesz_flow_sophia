@@ -10,6 +10,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+_TRAIN_PROCESS_STARTED = time.perf_counter()
+
+if os.environ.get("SLURM_JOB_ID") and "LOCAL_RANK" in os.environ:
+    cache_root = Path(os.environ.get("SLURM_TMPDIR", "/tmp"))
+    cache_tag = (
+        f"wflow_{os.environ['SLURM_JOB_ID']}_"
+        f"{os.environ.get('SLURM_NODEID', '0')}_"
+        f"{os.environ['LOCAL_RANK']}"
+    )
+
+    triton_cache = cache_root / cache_tag / "triton"
+    inductor_cache = cache_root / cache_tag / "torchinductor"
+    triton_cache.mkdir(parents=True, exist_ok=True)
+    inductor_cache.mkdir(parents=True, exist_ok=True)
+
+    os.environ["TRITON_CACHE_DIR"] = str(triton_cache)
+    os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(inductor_cache)
+
 import torch
 from einops import rearrange, repeat
 from tqdm import tqdm
@@ -17,8 +35,12 @@ from tqdm import tqdm
 from dataset.dataset import get_postprocess_fn, infinite_sampler
 from drift_loss import drift_loss
 from drift_loss_ot import drift_loss_ot
-from riesz_loss import riesz_loss
-from gaussian_loss_schedule import gaussian_loss
+from matern_rms import matern32_loss
+from gaussian_mmd_loss import gaussian_mmd_loss
+from riesz_loss import riesz_loss as direct_riesz_loss
+from riesz_power_topk import riesz_loss as power_topk_riesz_loss
+from riesz_rms import riesz_loss as rms_riesz_loss
+from riesz_loss_sliced import riesz_loss as sliced_riesz_loss
 from memory_bank import ArrayMemoryBank
 from models.mae_model import build_activation_function
 from utils.ckpt_util import restore_checkpoint, save_checkpoint, save_params_ema_artifact
@@ -26,7 +48,7 @@ from utils.dist_util import accelerator_empty_cache, maybe_ddp_model, process_co
 from utils.env import HF_ROOT
 from utils.fid_util import evaluate_fid
 from utils.init_util import maybe_init_state_params
-from utils.logging import is_rank_zero, log_for_0
+from utils.logging import TrainingTimeTracker, is_rank_zero, log_for_0
 from utils.misc import load_config, profile_func, run_init, seed_everything
 from utils.model_builder import build_model_dict
 
@@ -98,8 +120,10 @@ def train_step(
     ot_kwargs: dict | None = None,
     use_riesz: bool = False,
     riesz_kwargs: dict | None = None,
-    use_gaussian: bool = False,
-    gaussian_kwargs: dict | None = None,
+    use_matern: bool = False,
+    matern_kwargs: dict | None = None,
+    use_gaussian_mmd: bool = False,
+    gaussian_mmd_kwargs: dict | None = None,
     diverse_noise: bool = False,
 ):
     labels = torch.as_tensor(labels, device=device, dtype=torch.long)
@@ -128,6 +152,47 @@ def train_step(
     n_pos = samples.shape[1]
     n_gen = int(gen_per_label)
     n_uncond = negative_samples.shape[1]
+
+    _use_riesz = bool(use_riesz)
+    _use_matern = bool(use_matern)
+    _use_gaussian_mmd = bool(use_gaussian_mmd)
+    if int(_use_riesz) + int(_use_matern) + int(_use_gaussian_mmd) > 1:
+        raise ValueError(
+            "use_riesz, use_matern, and use_gaussian_mmd are mutually exclusive"
+        )
+
+    if _use_gaussian_mmd:
+        particle_loss_fn = gaussian_mmd_loss
+        particle_loss_kwargs = dict(gaussian_mmd_kwargs or {})
+        # The loss resolves the current scheduled lengthscale from this step.
+        particle_loss_kwargs["current_step"] = int(state.step)
+    elif _use_matern:
+        particle_loss_fn = matern32_loss
+        particle_loss_kwargs = dict(matern_kwargs or {})
+    else:
+        riesz_cfg = dict(riesz_kwargs or {})
+        use_rms_riesz = bool(riesz_cfg.pop("use_rms", False))
+        use_sliced_riesz = bool(riesz_cfg.pop("use_sliced", False))
+        use_power_topk_riesz = "power" in riesz_cfg or "topk" in riesz_cfg
+        if use_power_topk_riesz and (use_rms_riesz or use_sliced_riesz):
+            raise ValueError(
+                "Powered top-k Riesz cannot be combined with use_rms or "
+                "use_sliced; run it as a separate scalar-energy ablation"
+            )
+        if use_sliced_riesz:
+            riesz_cfg["use_sliced"] = True
+
+        if use_rms_riesz:
+            particle_loss_fn = rms_riesz_loss
+        elif use_sliced_riesz:
+            particle_loss_fn = sliced_riesz_loss
+        elif use_power_topk_riesz:
+            particle_loss_fn = power_topk_riesz_loss
+        else:
+            particle_loss_fn = direct_riesz_loss
+        particle_loss_kwargs = riesz_cfg
+
+    _use_particle_field = _use_riesz or _use_matern or _use_gaussian_mmd
 
     uncond_w = (cfg - 1.0) * (n_gen - 1) / max(1, n_uncond)
 
@@ -183,13 +248,7 @@ def train_step(
         use_no_sync = hasattr(state.model, "no_sync") and accum_idx < actual_accum - 1
         sync_ctx = state.model.no_sync() if use_no_sync else nullcontext()
 
-        _use_gaussian = bool(use_gaussian)
-        _use_riesz = bool(use_riesz) and not _use_gaussian
-        _use_ot = (
-            ot_mode == "debiased"
-            and not _use_riesz
-            and not _use_gaussian
-        )
+        _use_ot = ot_mode == "debiased" and not _use_particle_field
         _ot_kw = ot_kwargs or {}
         _use_new_cfg = _ot_kw.get("use_new_cfg", False)
         _resample_neg = _ot_kw.get("resample_neg", False) and _use_ot
@@ -227,7 +286,7 @@ def train_step(
                 feature_uncond = chunk_sg[k][:, n_pos:]
                 feature_gen = gen_features[k]
 
-                if _use_riesz or _use_gaussian:
+                if _use_particle_field:
                     feature_pos = rearrange(feature_pos, "b x f d -> (b f) x d")
                     feature_gen = rearrange(feature_gen, "b x f d -> (b f) x d")
                     feature_uncond = rearrange(feature_uncond, "b x f d -> (b f) x d")
@@ -245,28 +304,15 @@ def train_step(
                         f=feature_repeats,
                         k=n_uncond,
                     )
-
-                    if _use_gaussian:
-                        loss_feat, info = gaussian_loss(
-                            gen=feature_gen,
-                            fixed_pos=feature_pos,
-                            fixed_neg=feature_uncond,
-                            weight_gen=torch.ones_like(feature_gen[:, :, 0]),
-                            weight_pos=weight_pos,
-                            weight_neg=weight_neg,
-                            step=int(state.step),
-                            **(gaussian_kwargs or {}),
-                        )
-                    else:
-                        loss_feat, info = riesz_loss(
-                            gen=feature_gen,
-                            fixed_pos=feature_pos,
-                            fixed_neg=feature_uncond,
-                            weight_gen=torch.ones_like(feature_gen[:, :, 0]),
-                            weight_pos=weight_pos,
-                            weight_neg=weight_neg,
-                            **(riesz_kwargs or {}),
-                        )
+                    loss_feat, info = particle_loss_fn(
+                        gen=feature_gen,
+                        fixed_pos=feature_pos,
+                        fixed_neg=feature_uncond,
+                        weight_gen=torch.ones_like(feature_gen[:, :, 0]),
+                        weight_pos=weight_pos,
+                        weight_neg=weight_neg,
+                        **particle_loss_kwargs,
+                    )
                 else:
                     feature_pos = rearrange(feature_pos, "b x f d -> (b f) x d")
                     feature_gen = rearrange(feature_gen, "b x f d -> (b f) x d")
@@ -317,7 +363,7 @@ def train_step(
                             weight_neg=ot_neg_w,
                             **ot_loss_kwargs,
                         )
-                elif not _use_riesz and not _use_gaussian:
+                elif not _use_particle_field:
                     loss_feat, info = drift_loss(
                         gen=feature_gen,
                         fixed_pos=feature_pos,
@@ -359,7 +405,15 @@ def train_step(
 
 
 @torch.no_grad()
-def generate_step(batch, model, rng, postprocess_fn, cfg_scale=1.0, device: Optional[torch.device] = None):
+def generate_step(
+    batch,
+    model,
+    rng,
+    postprocess_fn,
+    cfg_scale=1.0,
+    device: Optional[torch.device] = None,
+    decode_batch_size=1,
+):
     _, labels = batch
     labels = torch.as_tensor(labels, dtype=torch.long)
     if device is None:
@@ -376,7 +430,11 @@ def generate_step(batch, model, rng, postprocess_fn, cfg_scale=1.0, device: Opti
         train=False,
         rng=gen,
     )["samples"]
-    return postprocess_fn(latent_samples)
+    decode_batch_size = int(decode_batch_size)
+    if decode_batch_size <= 0:
+        return postprocess_fn(latent_samples)
+    decoded = [postprocess_fn(chunk) for chunk in latent_samples.split(decode_batch_size)]
+    return torch.cat(decoded, dim=0)
 
 
 def train_gen(
@@ -390,12 +448,16 @@ def train_gen(
     postprocess_fn,
     dataset_name="imagenet256",
     train_batch_size=0,
+    num_epochs=None,
     total_steps=100000,
+    loader_batches_per_step=1,
     save_per_step=10000,
     eval_per_step=5000,
     eval_samples=50000,
+    preview_samples=None,
     sanity_samples=500,
-    eval_fid=True,
+    eval_decode_batch_size=1,
+    eval_fid=False,
     eval_isc=False,
     eval_prc_recall=False,
     activation_fn=None,
@@ -424,7 +486,7 @@ def train_gen(
     max_grad_norm=2.0,
     loss_kwargs=dict(R_list=(0.02, 0.05, 0.2)),
     keep_every=500000,
-    keep_last=2,
+    keep_last=None,
     init_from="",
     push_per_step=0,
     push_at_resume=3000,
@@ -434,8 +496,10 @@ def train_gen(
     ot_kwargs=None,
     use_riesz=False,
     riesz_kwargs=None,
-    use_gaussian=False,
-    gaussian_kwargs=None,
+    use_matern=False,
+    matern_kwargs=None,
+    use_gaussian_mmd=False,
+    gaussian_mmd_kwargs=None,
     diverse_noise=False,
 ):
     if isinstance(ema_decay, (list, tuple)):
@@ -495,8 +559,12 @@ def train_gen(
     pbar = tqdm(range(step, total_steps), initial=step, total=total_steps) if is_rank_zero() else range(step, total_steps)
     memory_bank_positive = ArrayMemoryBank(num_classes=1000, max_size=positive_bank_size)
     memory_bank_negative = ArrayMemoryBank(num_classes=1, max_size=negative_bank_size)
-    train_iter = infinite_sampler(train_loader, step)
+    # Each optimizer step may refill the memory bank from multiple loader
+    # batches. Resume at the matching point in the epoch sequence.
+    train_iter = infinite_sampler(train_loader, step * loader_batches_per_step)
     _ot_kw = dict(ot_kwargs) if ot_kwargs else {}
+    training_time = TrainingTimeTracker(workdir, initial_step=initial_step, total_steps=total_steps)
+    training_time.start()
 
     for step in pbar:
         start_time = time.time()
@@ -546,8 +614,10 @@ def train_gen(
                     ot_kwargs=_ot_kw,
                     use_riesz=use_riesz,
                     riesz_kwargs=riesz_kwargs,
-                    use_gaussian=use_gaussian,
-                    gaussian_kwargs=gaussian_kwargs,
+                    use_matern=use_matern,
+                    matern_kwargs=matern_kwargs,
+                    use_gaussian_mmd=use_gaussian_mmd,
+                    gaussian_mmd_kwargs=gaussian_mmd_kwargs,
                     diverse_noise=diverse_noise,
                     **forward_dict,
                 ),
@@ -572,23 +642,35 @@ def train_gen(
             ot_kwargs=_ot_kw,
             use_riesz=use_riesz,
             riesz_kwargs=riesz_kwargs,
-            use_gaussian=use_gaussian,
-            gaussian_kwargs=gaussian_kwargs,
+            use_matern=use_matern,
+            matern_kwargs=matern_kwargs,
+            use_gaussian_mmd=use_gaussian_mmd,
+            gaussian_mmd_kwargs=gaussian_mmd_kwargs,
             diverse_noise=diverse_noise,
             **forward_dict,
         )
 
         total_time = time.time() - start_time
+        if step == initial_step:
+            log_for_0(
+                "First optimizer step complete: step=%d, step_time=%.1f s, process_elapsed=%.1f s",
+                int(state.step),
+                total_time,
+                time.perf_counter() - _TRAIN_PROCESS_STARTED,
+            )
         metrics["total_time"] = total_time
         metrics["process_time"] = process_time
         metrics["kimg"] = (step + 1) * positive_samples.shape[0] / 1000.0
         metrics["forward_kimg"] = (step + 1) * positive_samples.shape[0] / 1000.0 * forward_dict["gen_per_label"]
+        completed_epochs = (step + 1) * loader_batches_per_step / max(1, len(train_loader))
+        metrics["epoch"] = min(float(num_epochs), completed_epochs) if num_epochs is not None else completed_epochs
         metrics.update(profile_metrics)
 
         logger.log_dict(metrics)
         step += 1
 
-        if step % save_per_step == 0 or step == total_steps:
+        checkpoint_due = step % save_per_step == 0 or step == total_steps
+        if checkpoint_due:
             save_checkpoint(state, keep=keep_last, keep_every=keep_every, workdir=workdir)
             if is_rank_zero():
                 save_params_ema_artifact(
@@ -597,8 +679,9 @@ def train_gen(
                     kind="gen",
                     model_config=_generator_model_config(state.model),
                 )
+            training_time.save(completed_steps=int(state.step), status="running")
 
-        if (step % eval_per_step == 0) or (step == 1) or (step == total_steps):
+        if step > 1 and ((step % eval_per_step == 0) or (step == total_steps)):
             accelerator_empty_cache()
             is_sanity = step == 1
             n_samples = sanity_samples if is_sanity else eval_samples
@@ -611,7 +694,13 @@ def train_gen(
                 result = evaluate_fid(
                     dataset_name=dataset_name,
                     gen_func=generate_step,
-                    gen_params={"model": state.ema_model, "cfg_scale": eval_cfg, "postprocess_fn": postprocess_fn, "device": device},
+                    gen_params={
+                        "model": state.ema_model,
+                        "cfg_scale": eval_cfg,
+                        "postprocess_fn": postprocess_fn,
+                        "device": device,
+                        "decode_batch_size": eval_decode_batch_size,
+                    },
                     eval_loader=eval_loader,
                     logger=logger,
                     num_samples=n_samples,
@@ -621,16 +710,24 @@ def train_gen(
                     eval_fid=eval_fid,
                     eval_isc=eval_isc,
                     eval_prc_recall=eval_prc_recall,
+                    preview_samples=preview_samples,
                 )
                 fid_val = result.get("fid", float("inf"))
                 if fid_val < round_best_fid:
                     round_best_fid = fid_val
                     round_best_cfg = eval_cfg
-            if not is_sanity:
+            if eval_fid and not is_sanity:
                 log_for_0("best_fid=%.4f best_cfg=%.1f (step=%d)", round_best_fid, round_best_cfg, step)
                 if is_rank_zero():
                     logger.log_dict({"best_fid": round_best_fid, "best_cfg": round_best_cfg})
 
+    timing = training_time.save(completed_steps=int(state.step), status="complete")
+    if timing is not None:
+        log_for_0(
+            "Training time saved to %s (accumulated %.2f hours)",
+            training_time.path,
+            timing["accumulated_training_hours"],
+        )
     logger.finish()
     del model, eval_loader, train_loader, state
     gc.collect()
@@ -670,12 +767,23 @@ def main_gen(config, output_dir="runs"):
     if bool(feature_cfg.get("use_mae", True)) and not mae_path:
         raise ValueError("feature.mae_path (or feature.load_dict.hf_model_name / feature.load_dict.path) is required when use_mae=true.")
 
+    feature_load_started = time.perf_counter()
+    log_for_0(
+        "Loading feature extractors (MAE=%s, mae_path=%s, ConvNeXt=%s)...",
+        bool(feature_cfg.get("use_mae", True)),
+        mae_path or "<disabled>",
+        bool(feature_cfg.get("use_convnext", False)),
+    )
     activation_fn, variables = build_activation_function(
         mae_path=mae_path,
         use_convnext=bool(feature_cfg.get("use_convnext", False)),
         convnext_bf16=bool(feature_cfg.get("convnext_bf16", False)),
         use_mae=bool(feature_cfg.get("use_mae", True)),
         postprocess_fn=postprocess_fn_noclip,
+    )
+    log_for_0(
+        "Feature extractors loaded in %.1f s; preparing generator, DDP, optimizer, and checkpoint restore",
+        time.perf_counter() - feature_load_started,
     )
 
     train_gen(
