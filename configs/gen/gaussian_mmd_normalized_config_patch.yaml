@@ -1,0 +1,26 @@
+# Merge this into the `train:` section of your existing Gaussian config.
+# Everything else can stay unchanged.
+
+train:
+  use_gaussian_mmd: true
+  gaussian_mmd_kwargs:
+    epsilon: 1.0e-8
+
+    # Same locality experiment as before for a controlled comparison.
+    target_eff_init: 12.0
+    target_eff_final: 3.0
+    target_eff_decay_steps: 30000
+    calibrate_every: 200
+    calibration_iters: 16
+    lengthscale_min: 1.0e-3
+    lengthscale_max: 1.0e3
+
+    # NEW: rescue the amplitude of dead Gaussian-MMD feature branches.
+    # One detached scalar rescales the WHOLE MMD loss for a feature branch.
+    normalize_kernel_amplitude: true
+    target_positive_row_mass: 1.0
+    max_loss_rescale: 1000.0
+    amplitude_floor: 1.0e-12
+    only_scale_up: true
+
+    log_effective_neighbors: true
