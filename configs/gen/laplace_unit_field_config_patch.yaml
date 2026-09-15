@@ -97,10 +97,11 @@ train:
 
     # Decreasing Laplace bandwidth: broad/soft early -> more local late.
     # Geometric gives tau=0.20 at step 0, 0.10 at step 15k, 0.05 at step 30k.
-    tau_init: 0.20
+    tau_init: 0.06
     tau_final: 0.05
     tau_decay_steps: 30000
     tau_schedule: geometric
+
 
     # Keep this false for the first experiment: then tau changes locality only.
     # Setting true additionally multiplies the field by the literal 1/tau factor
