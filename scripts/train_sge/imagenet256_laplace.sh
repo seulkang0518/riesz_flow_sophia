@@ -53,7 +53,7 @@ fi
 
 export MASTER_PORT=${MASTER_PORT:-6671}
 export CONFIG=${CONFIG:-configs/gen/laplace_unit_field_config_patch.yaml}
-export RUN_NAME=${RUN_NAME:-imagenet256_laplace_unit_field_1node_4gpu_official30k}
+export RUN_NAME=${RUN_NAME:-imagenet256_laplace_unit_field_1node_4gpu_official30k_check}
 export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
 export DRIFT_COMPILE=${DRIFT_COMPILE:-1}
 export DRIFT_FEAT_CHUNK=${DRIFT_FEAT_CHUNK:-1}

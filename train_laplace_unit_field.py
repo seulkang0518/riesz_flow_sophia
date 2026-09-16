@@ -262,6 +262,76 @@ def train_step(
                             weight_neg=weight_neg,
                             **lap_kwargs,
                         )
+
+                        # ---------------------------------------------------------
+                        # Diagnostic only: compare Laplace and hard top-k gradients
+                        # on the exact same feature tensors. This does not change
+                        # loss_feat or the subsequent training update.
+                        # ---------------------------------------------------------
+                        if is_rank_zero() and int(state.step) % 500 == 0:
+                            loss_top4, _ = direct_riesz_loss(
+                                gen=feature_gen,
+                                fixed_pos=feature_pos,
+                                fixed_neg=feature_uncond,
+                                weight_gen=torch.ones_like(feature_gen[:, :, 0]),
+                                weight_pos=weight_pos,
+                                weight_neg=weight_neg,
+                                power=1.0,
+                                topk=4,
+                            )
+
+                            loss_top8, _ = direct_riesz_loss(
+                                gen=feature_gen,
+                                fixed_pos=feature_pos,
+                                fixed_neg=feature_uncond,
+                                weight_gen=torch.ones_like(feature_gen[:, :, 0]),
+                                weight_pos=weight_pos,
+                                weight_neg=weight_neg,
+                                power=1.0,
+                                topk=8,
+                            )
+
+                            g_lap = torch.autograd.grad(
+                                loss_feat.mean(),
+                                feature_gen,
+                                retain_graph=True,
+                            )[0]
+                            g_top4 = torch.autograd.grad(
+                                loss_top4.mean(),
+                                feature_gen,
+                                retain_graph=True,
+                            )[0]
+                            g_top8 = torch.autograd.grad(
+                                loss_top8.mean(),
+                                feature_gen,
+                                retain_graph=True,
+                            )[0]
+
+                            def _grad_rms(x):
+                                return x.float().square().mean().sqrt()
+
+                            def _grad_cosine(a, b):
+                                a = a.float().reshape(-1)
+                                b = b.float().reshape(-1)
+                                return torch.sum(a * b) / (
+                                    torch.norm(a) * torch.norm(b) + 1e-12
+                                )
+
+                            lap_rms = _grad_rms(g_lap)
+                            top4_rms = _grad_rms(g_top4)
+                            top8_rms = _grad_rms(g_top8)
+
+                            print(
+                                f"[GRAD CHECK step={state.step} branch={k}] "
+                                f"D={feature_gen.shape[-1]} "
+                                f"lap_rms={lap_rms.item():.6e} "
+                                f"top4_rms={top4_rms.item():.6e} "
+                                f"top8_rms={top8_rms.item():.6e} "
+                                f"lap/top4={(lap_rms / top4_rms.clamp_min(1e-30)).item():.6e} "
+                                f"lap/top8={(lap_rms / top8_rms.clamp_min(1e-30)).item():.6e} "
+                                f"cos4={_grad_cosine(g_lap, g_top4).item():.4f} "
+                                f"cos8={_grad_cosine(g_lap, g_top8).item():.4f}"
+                            )
                     else:
                         loss_feat, info = riesz_loss_fn(
                             gen=feature_gen,
