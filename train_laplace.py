@@ -17,9 +17,7 @@ from tqdm import tqdm
 from dataset.dataset import get_postprocess_fn, infinite_sampler
 from drift_loss import drift_loss
 from drift_loss_ot import drift_loss_ot
-from laplace_unit_field_loss_rms import laplace_unit_field_loss
-from riesz_loss_power_topk import riesz_loss as direct_riesz_loss
-from riesz_loss_sliced import riesz_loss as sliced_riesz_loss
+from laplace_loss import laplace_unit_field_loss
 from memory_bank import ArrayMemoryBank
 from models.mae_model import build_activation_function
 from utils.ckpt_util import restore_checkpoint, save_checkpoint, save_params_ema_artifact
@@ -97,8 +95,6 @@ def train_step(
     device: torch.device = torch.device("cpu"),
     ot_mode: str = "none",
     ot_kwargs: dict | None = None,
-    use_riesz: bool = False,
-    riesz_kwargs: dict | None = None,
     use_laplace_unit: bool = False,
     laplace_kwargs: dict | None = None,
     diverse_noise: bool = False,
@@ -129,10 +125,6 @@ def train_step(
     n_pos = samples.shape[1]
     n_gen = int(gen_per_label)
     n_uncond = negative_samples.shape[1]
-
-    riesz_loss_fn = direct_riesz_loss
-    if bool((riesz_kwargs or {}).get("use_sliced", False)):
-        riesz_loss_fn = sliced_riesz_loss
 
     uncond_w = (cfg - 1.0) * (n_gen - 1) / max(1, n_uncond)
 
@@ -188,11 +180,8 @@ def train_step(
         use_no_sync = hasattr(state.model, "no_sync") and accum_idx < actual_accum - 1
         sync_ctx = state.model.no_sync() if use_no_sync else nullcontext()
 
-        _use_riesz = bool(use_riesz)
         _use_laplace_unit = bool(use_laplace_unit)
-        if _use_riesz and _use_laplace_unit:
-            raise ValueError("use_riesz and use_laplace_unit cannot both be true")
-        _use_particle_field = _use_riesz or _use_laplace_unit
+        _use_particle_field = _use_laplace_unit
         _use_ot = ot_mode == "debiased" and not _use_particle_field
         _ot_kw = ot_kwargs or {}
         _use_new_cfg = _ot_kw.get("use_new_cfg", False)
@@ -250,30 +239,17 @@ def train_step(
                         k=n_uncond,
                     )
 
-                    if _use_laplace_unit:
-                        lap_kwargs = dict(laplace_kwargs or {})
-                        lap_kwargs["current_step"] = int(state.step)
-                        loss_feat, info = laplace_unit_field_loss(
-                            gen=feature_gen,
-                            fixed_pos=feature_pos,
-                            fixed_neg=feature_uncond,
-                            weight_gen=torch.ones_like(feature_gen[:, :, 0]),
-                            weight_pos=weight_pos,
-                            weight_neg=weight_neg,
-                            **lap_kwargs,
-                        )
-
-                    else:
-                        loss_feat, info = riesz_loss_fn(
-                            gen=feature_gen,
-                            fixed_pos=feature_pos,
-                            fixed_neg=feature_uncond,
-                            weight_gen=torch.ones_like(feature_gen[:, :, 0]),
-                            weight_pos=weight_pos,
-                            weight_neg=weight_neg,
-                            current_step=int(state.step),
-                            **(riesz_kwargs or {}),
-                        )
+                    lap_kwargs = dict(laplace_kwargs or {})
+                    lap_kwargs["current_step"] = int(state.step)
+                    loss_feat, info = laplace_unit_field_loss(
+                        gen=feature_gen,
+                        fixed_pos=feature_pos,
+                        fixed_neg=feature_uncond,
+                        weight_gen=torch.ones_like(feature_gen[:, :, 0]),
+                        weight_pos=weight_pos,
+                        weight_neg=weight_neg,
+                        **lap_kwargs,
+                    )
                 else:
                     feature_pos = rearrange(feature_pos, "b x f d -> (b f) x d")
                     feature_gen = rearrange(feature_gen, "b x f d -> (b f) x d")
@@ -441,8 +417,6 @@ def train_gen(
     workdir="runs",
     ot_mode="none",
     ot_kwargs=None,
-    use_riesz=False,
-    riesz_kwargs=None,
     use_laplace_unit=False,
     laplace_kwargs=None,
     diverse_noise=False,
@@ -555,8 +529,6 @@ def train_gen(
                     device=device,
                     ot_mode=ot_mode,
                     ot_kwargs=_ot_kw,
-                    use_riesz=use_riesz,
-                    riesz_kwargs=riesz_kwargs,
                     use_laplace_unit=use_laplace_unit,
                     laplace_kwargs=laplace_kwargs,
                     diverse_noise=diverse_noise,
@@ -581,8 +553,6 @@ def train_gen(
             device=device,
             ot_mode=ot_mode,
             ot_kwargs=_ot_kw,
-            use_riesz=use_riesz,
-            riesz_kwargs=riesz_kwargs,
             use_laplace_unit=use_laplace_unit,
             laplace_kwargs=laplace_kwargs,
             diverse_noise=diverse_noise,
