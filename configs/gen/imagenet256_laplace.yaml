@@ -94,6 +94,7 @@ train:
   use_laplace_unit: true
   laplace_kwargs:
     epsilon: 1.0e-8
+    rms_epsilon: 1.0e-8
 
     # Decreasing Laplace bandwidth: broad/soft early -> more local late.
     # Geometric gives tau=0.20 at step 0, 0.10 at step 15k, 0.05 at step 30k.
