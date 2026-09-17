@@ -27,8 +27,8 @@ export TORCH_HUB_DIR=${TORCH_HUB_DIR:-$SHARED_WFLOW_CACHE/torch_hub}
 export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
 export TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
 
-if [[ ! -f train_laplace_unit_field.py ]]; then
-  echo "Error: train_laplace_unit_field.py was not found in repository directory: $REPO_DIR" >&2
+if [[ ! -f train_laplace.py ]]; then
+  echo "Error: train_laplace.py was not found in repository directory: $REPO_DIR" >&2
   echo "Set RIESZ_FLOW_REPO_DIR if the repository is installed elsewhere." >&2
   exit 1
 fi
@@ -52,8 +52,8 @@ if [[ "$NGPU" -lt 1 ]]; then
 fi
 
 export MASTER_PORT=${MASTER_PORT:-6671}
-export CONFIG=${CONFIG:-configs/gen/laplace_unit_field_config_patch.yaml}
-export RUN_NAME=${RUN_NAME:-imagenet256_laplace_unit_field_1node_4gpu_official30k_check}
+export CONFIG=${CONFIG:-configs/gen/imagenet256_laplace.yaml}
+export RUN_NAME=${RUN_NAME:-imagenet256_laplace}
 export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
 export DRIFT_COMPILE=${DRIFT_COMPILE:-1}
 export DRIFT_FEAT_CHUNK=${DRIFT_FEAT_CHUNK:-1}
@@ -90,6 +90,6 @@ torchrun \
   --nproc_per_node="$NGPU" \
   --master_addr=127.0.0.1 \
   --master_port="$MASTER_PORT" \
-  train_laplace_unit_field.py \
+  train_laplace.py \
   --config "$CONFIG" \
   --workdir "$WORKDIR"
