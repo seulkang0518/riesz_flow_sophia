@@ -17,7 +17,9 @@ from tqdm import tqdm
 from dataset.dataset import get_postprocess_fn, infinite_sampler
 from drift_loss import drift_loss
 from drift_loss_ot import drift_loss_ot
-from riesz_loss import riesz_loss
+from laplace_unit_field_loss_rms import laplace_unit_field_loss
+from riesz_loss_power_topk import riesz_loss as direct_riesz_loss
+from riesz_loss_sliced import riesz_loss as sliced_riesz_loss
 from memory_bank import ArrayMemoryBank
 from models.mae_model import build_activation_function
 from utils.ckpt_util import restore_checkpoint, save_checkpoint, save_params_ema_artifact
@@ -75,33 +77,6 @@ def _to_device(x, device):
     return x
 
 
-def _assert_finite_tensor(
-    name: str,
-    value: torch.Tensor,
-    step: int,
-    branch: str | None = None,
-):
-    """Stop immediately when a tensor contains NaN or Inf."""
-    if not torch.isfinite(value).all():
-        location = f", branch={branch}" if branch is not None else ""
-        finite_values = value[torch.isfinite(value)]
-        finite_min = (
-            finite_values.min().item()
-            if finite_values.numel() > 0
-            else float("nan")
-        )
-        finite_max = (
-            finite_values.max().item()
-            if finite_values.numel() > 0
-            else float("nan")
-        )
-        raise RuntimeError(
-            f"Non-finite tensor '{name}' at step={step}{location}; "
-            f"shape={tuple(value.shape)}, "
-            f"finite_min={finite_min}, finite_max={finite_max}"
-        )
-
-
 def train_step(
     state: TrainState,
     labels,
@@ -124,6 +99,8 @@ def train_step(
     ot_kwargs: dict | None = None,
     use_riesz: bool = False,
     riesz_kwargs: dict | None = None,
+    use_laplace_unit: bool = False,
+    laplace_kwargs: dict | None = None,
     diverse_noise: bool = False,
 ):
     labels = torch.as_tensor(labels, device=device, dtype=torch.long)
@@ -152,6 +129,10 @@ def train_step(
     n_pos = samples.shape[1]
     n_gen = int(gen_per_label)
     n_uncond = negative_samples.shape[1]
+
+    riesz_loss_fn = direct_riesz_loss
+    if bool((riesz_kwargs or {}).get("use_sliced", False)):
+        riesz_loss_fn = sliced_riesz_loss
 
     uncond_w = (cfg - 1.0) * (n_gen - 1) / max(1, n_uncond)
 
@@ -208,7 +189,11 @@ def train_step(
         sync_ctx = state.model.no_sync() if use_no_sync else nullcontext()
 
         _use_riesz = bool(use_riesz)
-        _use_ot = ot_mode == "debiased" and not _use_riesz
+        _use_laplace_unit = bool(use_laplace_unit)
+        if _use_riesz and _use_laplace_unit:
+            raise ValueError("use_riesz and use_laplace_unit cannot both be true")
+        _use_particle_field = _use_riesz or _use_laplace_unit
+        _use_ot = ot_mode == "debiased" and not _use_particle_field
         _ot_kw = ot_kwargs or {}
         _use_new_cfg = _ot_kw.get("use_new_cfg", False)
         _resample_neg = _ot_kw.get("resample_neg", False) and _use_ot
@@ -246,7 +231,7 @@ def train_step(
                 feature_uncond = chunk_sg[k][:, n_pos:]
                 feature_gen = gen_features[k]
 
-                if _use_riesz:
+                if _use_particle_field:
                     feature_pos = rearrange(feature_pos, "b x f d -> (b f) x d")
                     feature_gen = rearrange(feature_gen, "b x f d -> (b f) x d")
                     feature_uncond = rearrange(feature_uncond, "b x f d -> (b f) x d")
@@ -264,30 +249,31 @@ def train_step(
                         f=feature_repeats,
                         k=n_uncond,
                     )
-                    loss_feat, info = riesz_loss(
-                        gen=feature_gen,
-                        fixed_pos=feature_pos,
-                        fixed_neg=feature_uncond,
-                        weight_gen=torch.ones_like(feature_gen[:, :, 0]),
-                        weight_pos=weight_pos,
-                        weight_neg=weight_neg,
-                        **(riesz_kwargs or {}),
-                    )
 
-                    _assert_finite_tensor(
-                        "riesz_loss",
-                        loss_feat,
-                        step=state.step,
-                        branch=k,
-                    )
-                    for info_name, info_value in info.items():
-                        if torch.is_tensor(info_value):
-                            _assert_finite_tensor(
-                                info_name,
-                                info_value,
-                                step=state.step,
-                                branch=k,
-                            )
+                    if _use_laplace_unit:
+                        lap_kwargs = dict(laplace_kwargs or {})
+                        lap_kwargs["current_step"] = int(state.step)
+                        loss_feat, info = laplace_unit_field_loss(
+                            gen=feature_gen,
+                            fixed_pos=feature_pos,
+                            fixed_neg=feature_uncond,
+                            weight_gen=torch.ones_like(feature_gen[:, :, 0]),
+                            weight_pos=weight_pos,
+                            weight_neg=weight_neg,
+                            **lap_kwargs,
+                        )
+
+                    else:
+                        loss_feat, info = riesz_loss_fn(
+                            gen=feature_gen,
+                            fixed_pos=feature_pos,
+                            fixed_neg=feature_uncond,
+                            weight_gen=torch.ones_like(feature_gen[:, :, 0]),
+                            weight_pos=weight_pos,
+                            weight_neg=weight_neg,
+                            current_step=int(state.step),
+                            **(riesz_kwargs or {}),
+                        )
                 else:
                     feature_pos = rearrange(feature_pos, "b x f d -> (b f) x d")
                     feature_gen = rearrange(feature_gen, "b x f d -> (b f) x d")
@@ -338,7 +324,7 @@ def train_step(
                             weight_neg=ot_neg_w,
                             **ot_loss_kwargs,
                         )
-                elif not _use_riesz:
+                elif not _use_particle_field:
                     loss_feat, info = drift_loss(
                         gen=feature_gen,
                         fixed_pos=feature_pos,
@@ -359,109 +345,20 @@ def train_step(
 
             chunk_loss = chunk_loss / max(1, len(chunk_sg))
             scaled_loss = chunk_loss / actual_accum
-
-            _assert_finite_tensor(
-                "chunk_loss",
-                chunk_loss,
-                step=state.step,
-            )
-            _assert_finite_tensor(
-                "scaled_loss",
-                scaled_loss,
-                step=state.step,
-            )
-
             scaled_loss.backward()
-
-            for param_name, param in state.model.named_parameters():
-                if param.grad is not None:
-                    _assert_finite_tensor(
-                        f"gradient:{param_name}",
-                        param.grad,
-                        step=state.step,
-                    )
 
             total_loss_accum = total_loss_accum + chunk_loss.detach()
 
-    # Compute the global gradient norm in float64 so very large but finite
-    # float32 gradients do not overflow during norm calculation.
-    max_grad = 0.0
-    max_name = None
-    total_sq_norm = torch.zeros((), device=device, dtype=torch.float64)
-
-    for name, param in state.model.named_parameters():
-        if param.grad is None:
-            continue
-
-        grad64 = param.grad.detach().to(dtype=torch.float64)
-        grad_abs_max = grad64.abs().max().item()
-        total_sq_norm = total_sq_norm + grad64.square().sum()
-
-        if grad_abs_max > max_grad:
-            max_grad = grad_abs_max
-            max_name = name
-
-    stable_g_norm = total_sq_norm.sqrt()
-    _assert_finite_tensor(
-        "stable_gradient_norm",
-        stable_g_norm,
-        step=state.step,
-    )
-
-    print(
-        f"[step {state.step}] "
-        f"largest gradient: {max_grad:.6e} in {max_name}; "
-        f"stable total norm: {stable_g_norm.item():.6e}"
-    )
-
-    # Clip manually using the stable float64 norm. This is mathematically the
-    # same global L2 clipping rule, but avoids overflow in clip_grad_norm_.
-    clip_coef = min(
-        1.0,
-        float(max_grad_norm) / (stable_g_norm.item() + 1.0e-6),
-    )
-
-    for param in state.model.parameters():
-        if param.grad is not None:
-            param.grad.mul_(clip_coef)
-
-    clipped_sq_norm = torch.zeros((), device=device, dtype=torch.float64)
-    for param in state.model.parameters():
-        if param.grad is not None:
-            grad64 = param.grad.detach().to(dtype=torch.float64)
-            clipped_sq_norm = clipped_sq_norm + grad64.square().sum()
-
-    clipped_g_norm = clipped_sq_norm.sqrt()
-    _assert_finite_tensor(
-        "clipped_gradient_norm",
-        clipped_g_norm,
-        step=state.step,
-    )
-
+    g_norm = torch.nn.utils.clip_grad_norm_(state.model.parameters(), max_grad_norm)
     state.optimizer.step()
-
-    for param_name, param in state.model.named_parameters():
-        _assert_finite_tensor(
-            f"parameter_after_step:{param_name}",
-            param,
-            step=state.step,
-        )
-
     _update_ema(state.ema_model, state.model, state.ema_decay)
-
-    for param_name, param in state.ema_model.named_parameters():
-        _assert_finite_tensor(
-            f"ema_parameter:{param_name}",
-            param,
-            step=state.step,
-        )
 
     metrics = {}
     for k, v in total_info.items():
         val = v / actual_accum
         metrics[k] = val.mean().detach() if torch.is_tensor(val) else torch.tensor(float(val), device=device)
     metrics["loss"] = total_loss_accum / actual_accum
-    metrics["g_norm"] = clipped_g_norm.to(dtype=torch.float32)
+    metrics["g_norm"] = torch.as_tensor(g_norm, device=device)
     metrics["lr"] = torch.tensor(lr, device=device)
 
     state.step += 1
@@ -500,7 +397,9 @@ def train_gen(
     postprocess_fn,
     dataset_name="imagenet256",
     train_batch_size=0,
+    num_epochs=None,
     total_steps=100000,
+    loader_batches_per_step=1,
     save_per_step=10000,
     eval_per_step=5000,
     eval_samples=50000,
@@ -544,6 +443,8 @@ def train_gen(
     ot_kwargs=None,
     use_riesz=False,
     riesz_kwargs=None,
+    use_laplace_unit=False,
+    laplace_kwargs=None,
     diverse_noise=False,
 ):
     if isinstance(ema_decay, (list, tuple)):
@@ -603,7 +504,9 @@ def train_gen(
     pbar = tqdm(range(step, total_steps), initial=step, total=total_steps) if is_rank_zero() else range(step, total_steps)
     memory_bank_positive = ArrayMemoryBank(num_classes=1000, max_size=positive_bank_size)
     memory_bank_negative = ArrayMemoryBank(num_classes=1, max_size=negative_bank_size)
-    train_iter = infinite_sampler(train_loader, step)
+    # Each optimizer step may refill the memory bank from multiple loader
+    # batches. Resume at the matching point in the epoch sequence.
+    train_iter = infinite_sampler(train_loader, step * loader_batches_per_step)
     _ot_kw = dict(ot_kwargs) if ot_kwargs else {}
 
     for step in pbar:
@@ -640,6 +543,28 @@ def train_gen(
         process_time = time.time() - start_time
 
         profile_metrics = {}
+        if step == initial_step:
+            profile_metrics = profile_func(
+                lambda s, l, p, n, fp: train_step(
+                    s, l, p, n, fp, activation_fn,
+                    learning_rate_fn=learning_rate_fn,
+                    activation_kwargs=activation_kwargs,
+                    loss_kwargs=loss_kwargs,
+                    max_grad_norm=max_grad_norm,
+                    grad_accum_steps=grad_accum_steps,
+                    device=device,
+                    ot_mode=ot_mode,
+                    ot_kwargs=_ot_kw,
+                    use_riesz=use_riesz,
+                    riesz_kwargs=riesz_kwargs,
+                    use_laplace_unit=use_laplace_unit,
+                    laplace_kwargs=laplace_kwargs,
+                    diverse_noise=diverse_noise,
+                    **forward_dict,
+                ),
+                (state, labels_sel, positive_samples, negative_samples, feature_params),
+                name="train_step",
+            )
 
         state, metrics = train_step(
             state,
@@ -658,6 +583,8 @@ def train_gen(
             ot_kwargs=_ot_kw,
             use_riesz=use_riesz,
             riesz_kwargs=riesz_kwargs,
+            use_laplace_unit=use_laplace_unit,
+            laplace_kwargs=laplace_kwargs,
             diverse_noise=diverse_noise,
             **forward_dict,
         )
@@ -667,6 +594,8 @@ def train_gen(
         metrics["process_time"] = process_time
         metrics["kimg"] = (step + 1) * positive_samples.shape[0] / 1000.0
         metrics["forward_kimg"] = (step + 1) * positive_samples.shape[0] / 1000.0 * forward_dict["gen_per_label"]
+        completed_epochs = (step + 1) * loader_batches_per_step / max(1, len(train_loader))
+        metrics["epoch"] = min(float(num_epochs), completed_epochs) if num_epochs is not None else completed_epochs
         metrics.update(profile_metrics)
 
         logger.log_dict(metrics)
@@ -682,7 +611,7 @@ def train_gen(
                     model_config=_generator_model_config(state.model),
                 )
 
-        if eval_per_step > 0 and step % eval_per_step == 0:
+        if eval_fid and ((step % eval_per_step == 0) or (step == 1) or (step == total_steps)):
             accelerator_empty_cache()
             is_sanity = step == 1
             n_samples = sanity_samples if is_sanity else eval_samples

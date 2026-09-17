@@ -1,0 +1,98 @@
+================================================================================
+imagenet256_ot_1node_4gpu_official30k
+================================================================================
+all rows:   3001
+clean rows: 2991
+
+First 5 rows:
+step=     0  train=446.202156  total=489.696830  process=43.494674
+step=    10  train= 3.633844  total= 3.680996  process= 0.047152
+step=    20  train= 3.637473  total= 3.655192  process= 0.017719
+step=    30  train= 3.640002  total= 3.649863  process= 0.009861
+step=    40  train= 3.773443  total= 3.785430  process= 0.011987
+
+Last 5 rows:
+step= 29960  train= 3.497765  total= 3.506155  process= 0.008391
+step= 29970  train= 3.631995  total= 3.639868  process= 0.007873
+step= 29980  train= 3.352721  total= 3.359058  process= 0.006337
+step= 29990  train= 3.413629  total= 3.420354  process= 0.006725
+step= 29999  train= 3.481806  total= 3.489204  process= 0.007397
+
+Summary, excluding step < 100 and train_time >= 60:
+mean train sec/step:   3.742940
+median train sec/step: 3.689115
+min train sec/step:    3.310156
+max train sec/step:    4.333554
+
+Approx cumulative training hours from mean clean sec/step:
+step  10000: 10.3971 hours
+step  20000: 20.7941 hours
+step  28000: 29.1118 hours
+step  30000: 31.1912 hours
+
+================================================================================
+imagenet256_riesz_1node_4gpu_official30k
+================================================================================
+all rows:   3001
+clean rows: 2991
+
+First 5 rows:
+step=     0  train=371.032490  total=397.723069  process=26.690578
+step=    10  train= 2.635224  total= 2.669460  process= 0.034236
+step=    20  train= 2.648560  total= 2.660180  process= 0.011620
+step=    30  train= 2.643915  total= 2.652156  process= 0.008241
+step=    40  train= 2.806679  total= 2.814193  process= 0.007513
+
+Last 5 rows:
+step= 29960  train= 2.773639  total= 2.782440  process= 0.008801
+step= 29970  train= 2.666720  total= 2.675172  process= 0.008452
+step= 29980  train= 2.758860  total= 2.766843  process= 0.007983
+step= 29990  train= 2.664724  total= 2.672083  process= 0.007360
+step= 29999  train= 2.666944  total= 2.674938  process= 0.007994
+
+Summary, excluding step < 100 and train_time >= 60:
+mean train sec/step:   2.685606
+median train sec/step: 2.668204
+min train sec/step:    2.617420
+max train sec/step:    3.092735
+
+Approx cumulative training hours from mean clean sec/step:
+step  10000: 7.4600 hours
+step  20000: 14.9200 hours
+step  28000: 20.8881 hours
+step  30000: 22.3801 hours
+
+
+================================================================================
+imagenet256_riesz_power_top8_1node_4gpu_official30k
+================================================================================
+all rows:   1637
+clean rows: 1627
+
+First 5 rows:
+step=     0  train=5178.576634  total=5420.352623  process=241.775988
+step=    10  train= 3.700385  total= 3.734388  process= 0.034003
+step=    20  train= 3.669746  total=18.559384  process=14.889638
+step=    30  train= 5.548477  total=20.360001  process=14.811524
+step=    40  train= 7.044849  total=17.765254  process=10.720404
+
+Last 5 rows:
+step= 16320  train= 3.537974  total= 3.548610  process= 0.010636
+step= 16330  train= 3.534173  total= 3.544393  process= 0.010220
+step= 16340  train= 3.674953  total= 3.685205  process= 0.010252
+step= 16350  train= 3.478111  total= 3.488131  process= 0.010019
+step= 16360  train= 3.477304  total= 3.487761  process= 0.010458
+
+Summary, excluding step < 100 and train_time >= 60:
+mean train sec/step:   3.518041
+median train sec/step: 3.533574
+min train sec/step:    3.228215
+max train sec/step:    3.801305
+
+Approx cumulative training hours from mean clean sec/step:
+step  10000: 9.7723 hours
+step  20000: 19.5447 hours
+step  28000: 27.3625 hours
+step  30000: 29.3170 hours
+(base) [zongchen@beaker imagenet_mmd_flow]$ 
+
