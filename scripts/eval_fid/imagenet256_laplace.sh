@@ -40,8 +40,8 @@ export NGPU=${NGPU:-${NSLOTS:-2}}
 export MASTER_PORT=${MASTER_PORT:-28790}
 
 # ImageNet256 OT run.
-export CONFIG=${CONFIG:-configs/gen/laplace_unit_field_config_patch.yaml}
-export RUN_DIR=${RUN_DIR:-/SAN/intelsys/imagenet_mmd_flow/imagenet256_laplace_unit_field_1node_4gpu_official30k}
+export CONFIG=${CONFIG:-configs/gen/imagenet256_laplace.yaml}
+export RUN_DIR=${RUN_DIR:-/SAN/intelsys/imagenet_mmd_flow/imagenet256_laplace}
 export CKPT_DIR=${CKPT_DIR:-$RUN_DIR/checkpoints}
 export WORK_ROOT=${WORK_ROOT:-$RUN_DIR/fid_inference_ours_cfg1p19_work}
 export OUT_ROOT=${OUT_ROOT:-$RUN_DIR/fid_inference_ours_cfg1p19_json}
@@ -99,7 +99,7 @@ echo "Output root:      $OUT_ROOT"
 echo "MASTER_PORT:      $MASTER_PORT"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
 
-for STEPNUM in 00010000; do
+for STEPNUM in 00008000; do
   CKPT="$CKPT_DIR/state_${STEPNUM}.pt"
 
   if [[ ! -f "$CKPT" ]]; then
