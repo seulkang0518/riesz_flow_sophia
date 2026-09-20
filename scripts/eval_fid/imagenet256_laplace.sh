@@ -99,7 +99,7 @@ echo "Output root:      $OUT_ROOT"
 echo "MASTER_PORT:      $MASTER_PORT"
 echo "CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-unset}"
 
-for STEPNUM in 00018000, 00020000; do
+for STEPNUM in 00018000; do
   CKPT="$CKPT_DIR/state_${STEPNUM}.pt"
 
   if [[ ! -f "$CKPT" ]]; then
