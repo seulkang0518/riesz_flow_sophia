@@ -51,7 +51,7 @@ if [[ "$NGPU" -lt 1 ]]; then
   exit 1
 fi
 
-export MASTER_PORT=${MASTER_PORT:-6671}
+export MASTER_PORT=${MASTER_PORT:-6679}
 export CONFIG=${CONFIG:-configs/gen/imagenet256_b2_softmax_4gpu_pilot.yaml}
 export RUN_NAME=${RUN_NAME:-imagenet256_b2_softmax_4gpu_pilot}
 export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
