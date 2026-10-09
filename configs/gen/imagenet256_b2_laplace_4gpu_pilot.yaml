@@ -1,0 +1,122 @@
+# Four-GPU B/2 Laplace PILOT: fixed temperature 0.05, MAE-640.
+# Derived from the supplied configs; YAML parsed locally, not run on the cluster.
+# Launch FOUR GPU processes. GPU allocation is set in the job script, not here.
+# Uses the original Laplace config key: 64 loader samples PER GPU.
+# With four processes this gives 256 loader samples across ranks per batch.
+# Verify the resolved per-rank batch in the loader before a long run.
+# grad_accum_steps=4 is retained: this is NOT an optimizer-batch-matched
+# reproduction of the 16-GPU recipe. Do not assume neighbour pools match either.
+# Target duration: 20k optimizer steps IF total_steps is honored.
+# num_epochs=8 is an approximate fallback for the epoch-driven checkout:
+# 200160 * (8/320) * (1024/256) ~= 20016 steps; verify trainer startup total.
+# Keep 10k warmup to match the B/2 recipe; early FID is not a final-quality test.
+# EMA 0.9999 matches the supervisor's SOFTMAX config (Drifting paste used 0.999).
+# Requires a trainer supporting use_laplace_unit and laplace_kwargs.
+# R_list is retained as a compatibility setting; Laplace tau comes from
+# laplace_kwargs if the intended loss branch is selected. Confirm dispatch.
+# Equal tau endpoints make the existing geometric scheduler constant.
+# In-training evaluation is previews only; final FID needs the same evaluator,
+# reference statistics, and fine CFG sweep used for the comparison runs.
+
+logging:
+  use_wandb: false
+  log_every_k: 20
+dataset:
+  resolution: 256
+  use_aug: false
+  use_latent: true
+  use_cache: true
+  num_classes: 1000
+  eval_batch_size: 2048
+  kwargs:
+    num_workers: 8
+    pin_memory: true
+    prefetch_factor: 2
+  batch_size_per_gpu: 64
+model:
+  cond_dim: 768
+  input_size: 32
+  in_channels: 4
+  patch_size: 2
+  hidden_size: 768
+  depth: 12
+  num_heads: 12
+  mlp_ratio: 4.0
+  out_channels: 4
+  use_qknorm: true
+  use_swiglu: true
+  use_rope: true
+  use_rmsnorm: true
+  n_cls_tokens: 16
+  noise_classes: 64
+  noise_coords: 32
+  use_bf16: true
+  attn_fp32: false
+optimizer:
+  lr_schedule:
+    learning_rate: 0.0004
+    warmup_steps: 10000
+    lr_schedule: const
+    total_steps: 20000
+  weight_decay: 0.0
+  adam_b1: 0.9
+  adam_b2: 0.95
+train:
+  diverse_noise: true
+  train_batch_size: 128
+  seed: 42
+  total_steps: 20000
+  save_per_step: 2000
+  keep_every: 10000
+  eval_per_step: 5000
+  eval_samples: 64
+  eval_fid: false
+  eval_isc: false
+  eval_prc_recall: false
+  pos_per_sample: 64
+  neg_per_sample: 32
+  positive_bank_size: 128
+  negative_bank_size: 1000
+  forward_dict:
+    gen_per_label: 64
+    cfg_min: 1.0
+    cfg_max: 4.0
+    neg_cfg_pw: 5.0
+    no_cfg_frac: 0.0
+  activation_kwargs:
+    patch_mean_size: [2, 4]
+    patch_std_size: [2, 4]
+    use_std: true
+    use_mean: true
+    every_k_block: 2
+  loss_kwargs:
+    R_list: [0.05]
+
+  cfg_list: [1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
+  ema_decay: 0.9999
+  push_per_step: 128
+  push_at_resume: 1
+  grad_accum_steps: 4
+  max_grad_norm: 2.0
+  use_laplace_unit: true
+  laplace_kwargs:
+    epsilon: 1.0e-08
+    rms_epsilon: 1.0e-08
+    tau_init: 0.05
+    tau_final: 0.05
+    tau_decay_steps: 20000
+    tau_schedule: geometric
+    include_inverse_tau: false
+    field_scale: 1.0
+    log_effective_neighbors: true
+  num_epochs: 8
+  prune_at_keep_every: true
+  preview_samples: 24
+  ot_mode: none
+  use_riesz: false
+  use_riesz_topk_softmax: false
+  
+feature:
+  mae_path: hf://mae_latent_640
+  use_mae: true
+  use_convnext: false
