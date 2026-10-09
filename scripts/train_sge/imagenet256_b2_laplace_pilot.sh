@@ -22,7 +22,7 @@ conda activate mmd_flow
 cd "$REPO_DIR"
 
 export WFLOW_VAE_HF_PATH=${WFLOW_VAE_HF_PATH:-$SHARED_WFLOW_CACHE/sdvae_hf_root}
-export WFLOW_DRIFTING_HF_ROOT=${WFLOW_DRIFTING_HF_ROOT:-$SHARED_WFLOW_CACHE/drifting_hf_root}
+export WFLOW_DRIFTING_HF_ROOT="/SAN/intelsys/imagenet_mmd_flow/cache/drifting_hf_root"
 export TORCH_HUB_DIR=${TORCH_HUB_DIR:-$SHARED_WFLOW_CACHE/torch_hub}
 export HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
 export TRANSFORMERS_OFFLINE=${TRANSFORMERS_OFFLINE:-1}
