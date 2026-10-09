@@ -27,12 +27,14 @@ dataset:
   use_latent: true
   use_cache: true
   num_classes: 1000
+  eval_split: train
+  batch_size_per_gpu: 64
   eval_batch_size: 2048
   kwargs:
     num_workers: 8
     pin_memory: true
     prefetch_factor: 2
-  batch_size_per_gpu: 64
+    
 model:
   cond_dim: 768
   input_size: 32
@@ -115,7 +117,7 @@ train:
   ot_mode: none
   use_riesz: false
   use_riesz_topk_softmax: false
-  
+
 feature:
   mae_path: hf://mae_latent_640
   use_mae: true
