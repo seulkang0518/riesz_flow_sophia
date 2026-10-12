@@ -166,6 +166,8 @@ def laplace_unit_field_loss(
     include_inverse_tau: bool = False,
     field_scale: float = 1.0,
     log_effective_neighbors: bool = True,
+    # Diagnostic reductions are disabled during normal training.
+    log_diagnostics: bool = False,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     """Train toward a normalized Laplace unit-direction field.
 
@@ -289,25 +291,29 @@ def laplace_unit_field_loss(
         # for the fixed-point surrogate.
         goal_scaled = (old_gen / scale_inputs + frozen_velocity).detach()
 
-        info: Dict[str, torch.Tensor] = {
-            "scale": scale.detach(),
-            "laplace_tau": torch.as_tensor(tau, device=gen.device),
-            "laplace_inverse_tau_enabled": torch.as_tensor(float(include_inverse_tau), device=gen.device),
-            "laplace_pos_field_rms": V_pos.square().mean().sqrt(),
-            "laplace_gen_rep_field_rms": V_gen_rep.square().mean().sqrt(),
-            "laplace_neg_rep_field_rms": V_neg_rep.square().mean().sqrt(),
-            "laplace_raw_field_rms": force_rms.detach(),
-            "laplace_force_scale": force_scale.detach(),
-            "laplace_frozen_velocity_rms": frozen_velocity.square().mean().sqrt(),
-            "laplace_total_field_rms": force_rms.detach(),
-            "laplace_pos_strength": pos_strength.mean(),
-            "laplace_neg_strength": neg_strength.mean(),
-        }
-        if log_effective_neighbors:
-            info.update(_support_stats("pos", pos_aff))
-            info.update(_support_stats("gen", gen_aff))
-            if neg_aff.numel() > 0:
-                info.update(_support_stats("neg", neg_aff))
+        # Keep field/neighbor diagnostics off the training hot path.
+        # Set laplace_kwargs.log_diagnostics=true to restore the metrics.
+        info: Dict[str, torch.Tensor] = {}
+        if log_diagnostics:
+            info = {
+                "scale": scale.detach(),
+                "laplace_tau": torch.as_tensor(tau, device=gen.device),
+                "laplace_inverse_tau_enabled": torch.as_tensor(float(include_inverse_tau), device=gen.device),
+                "laplace_pos_field_rms": V_pos.square().mean().sqrt(),
+                "laplace_gen_rep_field_rms": V_gen_rep.square().mean().sqrt(),
+                "laplace_neg_rep_field_rms": V_neg_rep.square().mean().sqrt(),
+                "laplace_raw_field_rms": force_rms.detach(),
+                "laplace_force_scale": force_scale.detach(),
+                "laplace_frozen_velocity_rms": frozen_velocity.square().mean().sqrt(),
+                "laplace_total_field_rms": force_rms.detach(),
+                "laplace_pos_strength": pos_strength.mean(),
+                "laplace_neg_strength": neg_strength.mean(),
+            }
+            if log_effective_neighbors:
+                info.update(_support_stats("pos", pos_aff))
+                info.update(_support_stats("gen", gen_aff))
+                if neg_aff.numel() > 0:
+                    info.update(_support_stats("neg", neg_aff))
 
     gen_scaled = gen / scale_inputs
     diff = gen_scaled - goal_scaled

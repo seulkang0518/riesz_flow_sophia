@@ -26,7 +26,7 @@ from utils.env import HF_ROOT
 from utils.fid_util import evaluate_fid
 from utils.init_util import maybe_init_state_params
 from utils.logging import is_rank_zero, log_for_0
-from utils.misc import load_config, profile_func, run_init, seed_everything
+from utils.misc import load_config, run_init, seed_everything
 from utils.model_builder import build_model_dict
 
 
@@ -516,27 +516,28 @@ def train_gen(
 
         process_time = time.time() - start_time
 
-        profile_metrics = {}
-        if step == initial_step:
-            profile_metrics = profile_func(
-                lambda s, l, p, n, fp: train_step(
-                    s, l, p, n, fp, activation_fn,
-                    learning_rate_fn=learning_rate_fn,
-                    activation_kwargs=activation_kwargs,
-                    loss_kwargs=loss_kwargs,
-                    max_grad_norm=max_grad_norm,
-                    grad_accum_steps=grad_accum_steps,
-                    device=device,
-                    ot_mode=ot_mode,
-                    ot_kwargs=_ot_kw,
-                    use_laplace_unit=use_laplace_unit,
-                    laplace_kwargs=laplace_kwargs,
-                    diverse_noise=diverse_noise,
-                    **forward_dict,
-                ),
-                (state, labels_sel, positive_samples, negative_samples, feature_params),
-                name="train_step",
-            )
+        # Startup profiling disabled; use a dedicated profiling run if needed.
+        # profile_metrics = {}
+        # if step == initial_step:
+        #     profile_metrics = profile_func(
+        #         lambda s, l, p, n, fp: train_step(
+        #             s, l, p, n, fp, activation_fn,
+        #             learning_rate_fn=learning_rate_fn,
+        #             activation_kwargs=activation_kwargs,
+        #             loss_kwargs=loss_kwargs,
+        #             max_grad_norm=max_grad_norm,
+        #             grad_accum_steps=grad_accum_steps,
+        #             device=device,
+        #             ot_mode=ot_mode,
+        #             ot_kwargs=_ot_kw,
+        #             use_laplace_unit=use_laplace_unit,
+        #             laplace_kwargs=laplace_kwargs,
+        #             diverse_noise=diverse_noise,
+        #             **forward_dict,
+        #         ),
+        #         (state, labels_sel, positive_samples, negative_samples, feature_params),
+        #         name="train_step",
+        #     )
 
         state, metrics = train_step(
             state,
@@ -566,7 +567,7 @@ def train_gen(
         metrics["forward_kimg"] = (step + 1) * positive_samples.shape[0] / 1000.0 * forward_dict["gen_per_label"]
         completed_epochs = (step + 1) * loader_batches_per_step / max(1, len(train_loader))
         metrics["epoch"] = min(float(num_epochs), completed_epochs) if num_epochs is not None else completed_epochs
-        metrics.update(profile_metrics)
+        # metrics.update(profile_metrics)  # startup profiling disabled
 
         logger.log_dict(metrics)
         step += 1

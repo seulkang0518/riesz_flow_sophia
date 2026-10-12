@@ -1,6 +1,7 @@
 logging:
   use_wandb: false
   log_every_k: 20
+
 dataset:
   resolution: 256
   use_aug: false
@@ -14,6 +15,7 @@ dataset:
     num_workers: 8
     pin_memory: true
     prefetch_factor: 2
+
 model:
   cond_dim: 768
   input_size: 32
@@ -33,6 +35,7 @@ model:
   noise_coords: 32
   use_bf16: true
   attn_fp32: false
+
 optimizer:
   lr_schedule:
     learning_rate: 0.0004
@@ -42,6 +45,7 @@ optimizer:
   weight_decay: 0.0
   adam_b1: 0.9
   adam_b2: 0.95
+  
 train:
   diverse_noise: true
   train_batch_size: 128
@@ -75,22 +79,23 @@ train:
     R_list: [0.05]
 
   cfg_list: [1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
-ema_decay: 0.9999
-push_per_step: 128
-push_at_resume: 1
-grad_accum_steps: 16
-max_grad_norm: 2.0
-use_laplace_unit: true
-laplace_kwargs:
-  epsilon: 1.0e-08
-  rms_epsilon: 1.0e-08
-  tau_init: 0.05
-  tau_final: 0.05
-  tau_decay_steps: 20000
-  tau_schedule: geometric
-  include_inverse_tau: false
-  field_scale: 1.0
-  log_effective_neighbors: true
+  ema_decay: 0.999
+  push_per_step: 128
+  push_at_resume: 1
+  grad_accum_steps: 16
+  max_grad_norm: 2.0
+  use_laplace_unit: true
+  laplace_kwargs:
+    epsilon: 1.0e-08
+    rms_epsilon: 1.0e-08
+    tau_init: 0.05
+    tau_final: 0.05
+    tau_decay_steps: 20000
+    tau_schedule: geometric
+    include_inverse_tau: false
+    field_scale: 1.0
+    log_effective_neighbors: true
+
 feature:
   mae_path: hf://mae_latent_640
   use_mae: true
