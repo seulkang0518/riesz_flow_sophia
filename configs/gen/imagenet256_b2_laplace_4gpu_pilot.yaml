@@ -38,7 +38,7 @@ model:
 
 optimizer:
   lr_schedule:
-    learning_rate: 0.0004
+    learning_rate: 0.0008
     warmup_steps: 10000
     lr_schedule: const
     total_steps: 20000

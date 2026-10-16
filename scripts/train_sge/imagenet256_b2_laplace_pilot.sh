@@ -53,7 +53,7 @@ fi
 
 export MASTER_PORT=${MASTER_PORT:-6678}
 export CONFIG=${CONFIG:-configs/gen/imagenet256_b2_laplace_4gpu_pilot.yaml}
-export RUN_NAME=${RUN_NAME:-imagenet256_b2_laplace_4gpu_pilot}
+export RUN_NAME=${RUN_NAME:-imagenet256_b2_laplace_4gpu_pilot_lr8}
 export WORKDIR=${WORKDIR:-/SAN/intelsys/imagenet_mmd_flow/$RUN_NAME}
 export DRIFT_COMPILE=${DRIFT_COMPILE:-1}
 export DRIFT_FEAT_CHUNK=${DRIFT_FEAT_CHUNK:-1}
